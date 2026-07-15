@@ -123,9 +123,10 @@ define([
         var password, newPadPassword, newPadPasswordForce;
         var initialPathInDrive;
         var burnAfterReading;
+        var parsedUnsafeLink;
         var Handler;
 
-        var currentPad = window.CryptPad_location = {
+        var currentPad = {
             app: '',
             href: cfg.href || window.location.href,
             hash: cfg.hash || window.location.hash
@@ -138,7 +139,7 @@ define([
                 '/common/cryptpad-common.js',
                 '/components/chainpad-crypto/crypto.js',
                 '/common/cryptget.js',
-                '/common/outer/worker-channel.js',
+                '/common/events-channel.js',
                 '/secureiframe/main.js',
                 '/unsafeiframe/main.js',
                 '/common/onlyoffice/ooiframe.js',
@@ -151,7 +152,7 @@ define([
                 '/common/common-feedback.js',
                 '/common/outer/local-store.js',
                 '/common/outer/login-block.js',
-                '/common/outer/cache-store.js',
+                '/common/cache-store.js',
                 '/customize/application_config.js',
                 //'/common/test.js',
                 '/common/user-object.js',
@@ -319,7 +320,7 @@ define([
                 let canNoDrive = false;
                 try {
                     var parsed = Utils.Hash.parsePadUrl(currentPad.href);
-                    canNoDrive = !(parsed?.hashData?.version === 3) && !parsed?.hashData?.password;
+                    canNoDrive = ![3,4].includes(parsed?.hashData?.version) && !parsed?.hashData?.password;
                     var options = parsed.getOptions();
                     if (options.loginOpts) {
                         var loginOpts = Utils.Hash.decodeDataOptions(options.loginOpts);
@@ -400,6 +401,17 @@ define([
             burnAfterReading = parsed && parsed.hashData && parsed.hashData.ownerKey;
 
             currentPad.app = parsed.type;
+
+            // Allow "debug" to show drive content if no hash is provided
+            if (parsed.type === "debug" && !currentPad.hash) {
+                currentPad.app = "debug";
+                const fsHash = localStorage.FS_hash;
+                currentPad.hash = Cryptpad.userHash || fsHash;
+                currentPad.href = '/debug/#'+currentPad.hash;
+                window.location.hash = currentPad.hash;
+                parsed = Utils.Hash.parsePadUrl(currentPad.href);
+            }
+
             if (cfg.getSecrets) {
                 var w = waitFor();
                 // No password for drive, profile and todo
@@ -631,6 +643,7 @@ define([
                         // Use the same options in the full hash
                         var opts = parsed.getOptions();
                         parsed = Utils.Hash.parsePadUrl(newHref);
+                        parsedUnsafeLink = Utils.Hash.parsePadUrl(newHref);
                         currentPad.href = parsed.getUrl(opts);
                         currentPad.hash = parsed.hashData && parsed.hashData.getHash(opts);
                     }
@@ -751,6 +764,7 @@ define([
             if (!parsed.type) { throw new Error(); }
             var defaultTitle = Utils.UserObject.getDefaultName(parsed);
             var edPublic, curvePublic, notifications, isTemplate;
+            var edPrivate;
             var settings = {};
             var isSafe = ['debug', 'profile', 'drive', 'teams', 'calendar', 'file'].indexOf(currentPad.app) !== -1;
             var isOO = ['sheet', 'doc', 'presentation'].indexOf(parsed.type) !== -1;
@@ -760,6 +774,7 @@ define([
             if (isDeleted) {
                 Utils.Cache.clearChannel(secret.channel);
             }
+            let signature, signed;
 
             var updateMeta = function () {
                 //console.log('EV_METADATA_UPDATE');
@@ -775,6 +790,9 @@ define([
                         curvePublic = metaObj.user.curvePublic;
                         notifications = metaObj.user.notifications;
                         settings = metaObj.priv.settings;
+
+                        edPrivate = metaObj.priv.edPrivate;
+                        delete metaObj.priv.edPrivate; // don't send to inner
                     }));
                     if (typeof(isTemplate) === "undefined") {
                         Cryptpad.isTemplate(currentPad.href, waitFor(function (err, t) {
@@ -794,7 +812,7 @@ define([
                         origin: window.location.origin,
                         pathname: window.location.pathname,
                         fileHost: ApiConfig.fileHost,
-                        readOnly: readOnly,
+                        readOnly: cfg?.integrationConfig?.readOnly || readOnly,
                         isTemplate: isTemplate,
                         newTemplate: Array.isArray(Cryptpad.initialPath)
                                         && Cryptpad.initialPath[0] === "template",
@@ -808,8 +826,7 @@ define([
                         isHistoryVersion: parsed.hashData && parsed.hashData.versionHash,
                         notifications: notifs,
                         accounts: {
-                            donateURL: Cryptpad.donateURL,
-                            upgradeURL: Cryptpad.upgradeURL
+                            donateURL: Cryptpad.donateURL
                         },
                         isNewFile: isNewFile,
                         isDeleted: isDeleted,
@@ -831,6 +848,10 @@ define([
                             !Utils.PadTypes.isAvailable(parsed.type)) {
                         additionalPriv.disabledApp = true;
                     }
+                    if (AppConfig.integrationOnly && !cfg.integration) {
+                        additionalPriv.disabledApp = true;
+                    }
+
                     if (!Utils.LocalStore.isLoggedIn() &&
                         AppConfig.registeredOnlyTypes.indexOf(parsed.type) !== -1 &&
                         parsed.type !== "file") {
@@ -856,6 +877,19 @@ define([
                         }
                     }
 
+                    if (metaObj?.user?.edPublic) { // logged in only
+                        let str = metaObj?.user?.netfluxId;// + secret.channel;
+                        if (str && signed !== str) {
+                            let myIDu8 = Utils.Util.decodeUTF8(str);
+                            let k = Utils.Util.decodeBase64(edPrivate);
+                            let nacl = Utils.Crypto.Nacl;
+                            let s = nacl.sign(myIDu8, k);
+                            signed = str;
+                            signature = Utils.Util.encodeBase64(s);
+                        }
+                        metaObj.user.signature = signature;
+                    }
+
                     // Early access
                     var priv = metaObj.priv;
                     var _plan = typeof(priv.plan) === "undefined" ? Utils.LocalStore.getPremium() : priv.plan;
@@ -877,7 +911,7 @@ define([
                     for (var k in additionalPriv) { metaObj.priv[k] = additionalPriv[k]; }
 
                     if (cfg.addData) {
-                        cfg.addData(metaObj.priv, Cryptpad, metaObj.user, Utils);
+                        cfg.addData(metaObj.priv, Cryptpad, metaObj.user, Utils, parsedUnsafeLink);
                     }
 
                     if (metaObj && metaObj.priv && typeof(metaObj.priv.plan) === "string") {
@@ -994,6 +1028,110 @@ define([
                         cb({error:e});
                     });
                 });
+                var CROWDFUNDING_PREFIX = 'cp_crowdfunding_';
+                var CROWDFUNDING_DRIVE_KEY = ['general', 'crowdfunding_metrics'];
+                // First action (opening or creating a document) count threshold before showing the banner
+                var CROWDFUNDING_MIN_ACTIONS = 5;
+                // Additional actions required after each shown banner
+                var CROWDFUNDING_ACTIONS_INTERVAL = 10;
+                // Quota usage threshold for quota-based banner display
+                var CROWDFUNDING_MIN_QUOTA_MB = 50;
+                // Cooldown between banner displays based on last shown timestamp in milliseconds
+                var CROWDFUNDING_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+                var crowdfundingGetLS = function () {
+                    var get = function (suffix) {
+                        var k = CROWDFUNDING_PREFIX + suffix;
+                        var val = localStorage.getItem(k);
+                        if (val !== null && val !== '') { return Number(val) || null; }
+                        return null;
+                    };
+                    return {
+                        visitCount: get('visitCount') || 0,
+                        firstSeen: get('firstSeen') || null,
+                        lastShownAtCount: get('lastShownAtCount') || 0,
+                        lastShownAtTime: get('lastShownAtTime') || 0
+                    };
+                };
+                // Read metrics: encrypted drive for logged-in users, localStorage for guests
+                var crowdfundingReadMetrics = function (cb) {
+                    if (!Utils.LocalStore.isLoggedIn()) { return cb(crowdfundingGetLS()); }
+                    Cryptpad.getAttribute(CROWDFUNDING_DRIVE_KEY, function (e, metrics) {
+                        if (e || !metrics || typeof metrics !== 'object') {
+                            return cb({
+                                visitCount: 0,
+                                firstSeen: null,
+                                lastShownAtCount: 0,
+                                lastShownAtTime: 0
+                            });
+                        }
+                        cb(metrics);
+                    });
+                };
+                // Write metrics: encrypted drive for logged-in users, localStorage for guests
+                var crowdfundingWriteMetrics = function (metrics, cb) {
+                    if (!Utils.LocalStore.isLoggedIn()) {
+                        try {
+                            ['visitCount', 'firstSeen', 'lastShownAtCount', 'lastShownAtTime'].forEach(function (k) {
+                                if (metrics[k] !== null && metrics[k] !== undefined) {
+                                    localStorage.setItem(CROWDFUNDING_PREFIX + k, String(metrics[k]));
+                                }
+                            });
+                        } catch (e) {}
+                        return cb && cb();
+                    }
+                    Cryptpad.setAttribute(CROWDFUNDING_DRIVE_KEY, metrics, function () {
+                        cb && cb();
+                    });
+                };
+                var crowdfundingIncrementAction = function (cb) {
+                    crowdfundingReadMetrics(function (metrics) {
+                        metrics.visitCount = (metrics.visitCount || 0) + 1;
+                        if (!metrics.firstSeen) { metrics.firstSeen = Date.now(); }
+                        crowdfundingWriteMetrics(metrics, cb);
+                    });
+                };
+
+                sframeChan.on('Q_CROWDFUNDING_SHOULD_SHOW', function (data, cb) {
+                    crowdfundingReadMetrics(function (metrics) {
+                        var actionCount = metrics.visitCount || 0;
+                        var lastShownAtCount = metrics.lastShownAtCount || 0;
+                        var lastShownAtTime = metrics.lastShownAtTime || 0;
+                        var now = Date.now();
+                        var nextThreshold = lastShownAtCount === 0 ? CROWDFUNDING_MIN_ACTIONS : lastShownAtCount + CROWDFUNDING_ACTIONS_INTERVAL;
+                        var enoughTimePassed = lastShownAtTime === 0 || (now - lastShownAtTime >= CROWDFUNDING_COOLDOWN_MS);
+                        var showFromActions = actionCount >= nextThreshold && enoughTimePassed;
+                        if (showFromActions) {
+                            return cb({
+                                show: true,
+                                actionCount: actionCount
+                            });
+                        }
+                        if (CROWDFUNDING_MIN_QUOTA_MB <= 0) {
+                            return cb({
+                                show: false,
+                                actionCount: actionCount
+                            });
+                        }
+                        Cryptpad.getPinnedUsage({}, function (e, used) {
+                            var usedMb = (typeof used === 'number') ? (used / (1024 * 1024)) : 0;
+                            cb({
+                                show: !e && usedMb >= CROWDFUNDING_MIN_QUOTA_MB && enoughTimePassed,
+                                actionCount: actionCount
+                            });
+                        });
+                    });
+                });
+                sframeChan.on('Q_RECORD_CROWDFUNDING_SHOWN', function (data, cb) {
+                    crowdfundingReadMetrics(function (metrics) {
+                        metrics.lastShownAtCount = (data && typeof data.count === 'number') ? data.count : (metrics.visitCount || 0);
+                        metrics.lastShownAtTime = Date.now();
+                        crowdfundingWriteMetrics(metrics, cb);
+                    });
+                });
+                sframeChan.on('Q_CROWDFUNDING_INCREMENT_OPEN', function (data, cb) {
+                    if (readOnly) { return cb && cb(); }
+                    crowdfundingIncrementAction(cb);
+                });
 
                 Cryptpad.mailbox.onEvent.reg(function (data, cb) {
                     sframeChan.query('EV_MAILBOX_EVENT', data, function (err, obj) {
@@ -1094,6 +1232,7 @@ define([
                             href: data.href,
                             channel: data.channel,
                             title: data.title,
+                            attributes: data.attributes,
                             owners: data.metadata ? data.metadata.owners : data.owners,
                             expire: data.metadata ? data.metadata.expire : data.expire,
                             forceSave: true
@@ -1676,7 +1815,6 @@ define([
                             }
                         });
                     };
-                    data.blob = Crypto.Nacl.util.decodeBase64(data.blob);
                     Files.upload(data, data.noStore, Cryptpad, updateProgress, onComplete, onError, onPending);
                     cb();
                 });
@@ -1937,57 +2075,79 @@ define([
             // It seems we have performance issues when we open and close a lot of channels over
             // the same network, maybe a memory leak. To fix this, we kill and create a new
             // network every 30 cryptget calls (1 call = 1 channel)
-            var cgNetwork;
-            var whenCGReady = function (cb) {
-                if (cgNetwork && cgNetwork !== true) { console.log(cgNetwork); return void cb(); }
-                setTimeout(function () {
-                    whenCGReady(cb);
-                }, 500);
-            };
-            var i = 0;
+            let cgNetworkStatus = {};
+            let cgNetworkId = 0;
+            let cgNetworkIndex = 0;
+            let cgNetwork;
+
             sframeChan.on('Q_CRYPTGET', function (data, cb) {
                 var keys;
-                var todo = function () {
-                    data.opts.network = cgNetwork;
+                var todo = function (network) {
+                    data.opts.network = network;
                     data.opts.accessKeys = keys;
-                    Cryptget.get(data.hash, function (err, val) {
-                        cb({
-                            error: err,
-                            data: val
+
+                    // Use promises to know when all the cryptget are done
+                    // so that we can disconnect the network
+                    cgNetworkStatus[cgNetworkId] ||= [];
+                    cgNetworkStatus[cgNetworkId].push(new Promise((res) => {
+                        Cryptget.get(data.hash, function (err, val) {
+                            res(network);
+                            cb({
+                                error: err,
+                                data: val
+                            });
+                        }, data.opts, function (progress) {
+                            sframeChan.event("EV_CRYPTGET_PROGRESS", {
+                                hash: data.hash,
+                                progress: progress,
+                            });
                         });
-                    }, data.opts, function (progress) {
-                        sframeChan.event("EV_CRYPTGET_PROGRESS", {
-                            hash: data.hash,
-                            progress: progress,
-                        });
-                    });
+                    }));
                 };
-                //return void todo();
-                if (i > 30) {
-                    i = 0;
+
+                // Every 30 cryptget, make a new network
+                if (cgNetworkIndex > 30) {
+                    cgNetworkIndex = 0;
+                    // Make sure all previous command are done and disconnect
+                    const prom = cgNetworkStatus[cgNetworkId] || [];
+                    Promise.all(prom).then((nw) => {
+                        let network = nw[0];
+                        if (typeof(network?.disconnect) === "function") {
+                            network.disconnect();
+                        }
+                    });
                     cgNetwork = undefined;
+                    cgNetworkId ++;
                 }
-                i++;
+                cgNetworkIndex++;
 
                 Cryptpad.getAccessKeys(function (_keys) {
                     keys = _keys;
                     if (!cgNetwork) {
-                        cgNetwork = true;
-                        return void Cryptpad.makeNetwork(function (err, nw) {
-                            console.log(nw);
-                            cgNetwork = nw;
-                            todo();
+                        cgNetwork = new Promise((res) => {
+                            Cryptpad.makeNetwork(function (err, nw) {
+                                res(nw);
+                                //cgNetwork = nw;
+                                todo(nw);
+                            });
                         });
-                    } else if (cgNetwork === true) {
-                        return void whenCGReady(todo);
+                        return;
                     }
-                    todo();
+                    cgNetwork.then(todo);
                 });
             });
             sframeChan.on('EV_CRYPTGET_DISCONNECT', function () {
-                if (!cgNetwork) { return; }
-                cgNetwork.disconnect();
+                const prom = cgNetworkStatus[cgNetworkId] || [];
+                Promise.all(prom).then((nw) => {
+                    let network = nw[0];
+                    if (typeof(network?.disconnect) === "function") {
+                        network.disconnect();
+                    }
+                });
                 cgNetwork = undefined;
+                cgNetworkId = 0;
+                cgNetworkIndex = 0;
+                cgNetworkStatus = {};
             });
 
             if (cfg.addRpc) {
@@ -2057,7 +2217,6 @@ define([
 
             sframeChan.on('Q_ASK_NOTIFICATION', function (data, cb) {
                 if (!Utils.Notify.isSupported()) { return void cb(false); }
-                // eslint-disable-next-line compat/compat
                 Notification.requestPermission(function (s) {
                     cb(s === "granted");
                 });
@@ -2104,6 +2263,14 @@ define([
                         cfg.integrationUtils.onHasUnsavedChanges(obj, cb);
                     }
                 });
+                sframeChan.on('Q_INTEGRATION_USERLIST_CHANGE', function (obj, cb) {
+                    cfg?.integrationUtils?.onUserlistChange?.(obj, cb);
+                });
+                sframeChan.on('Q_INTEGRATION_ERROR', function (obj) {
+                    if (cfg.integrationUtils && cfg.integrationUtils.onError) {
+                        cfg.integrationUtils.onError(obj);
+                    }
+                });
                 sframeChan.on('Q_INTEGRATION_ON_INSERT_IMAGE', function (data, cb) {
                     if (cfg.integrationUtils && cfg.integrationUtils.onInsertImage) {
                         cfg.integrationUtils.onInsertImage(data, cb);
@@ -2118,6 +2285,11 @@ define([
                         cfg.integrationUtils.setDownloadAs(format => {
                             sframeChan.event('EV_INTEGRATION_DOWNLOADAS', format);
                         });
+                    if (cfg.integrationUtils.setSave) {
+                        cfg.integrationUtils.setSave(() => {
+                            sframeChan.event('EV_INTEGRATION_MANUAL_SAVE');
+                        });
+                    }
                     }
                 }
 

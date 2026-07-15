@@ -17,10 +17,10 @@ define([
     '/common/common-hash.js',
     '/common/inner/sidebar-layout.js',
     '/support/ui.js',
+    '/common/common-icons.js',
 
     '/components/file-saver/FileSaver.min.js',
 
-    'css!/components/components-font-awesome/css/font-awesome.min.css',
     'less!/moderation/app-moderation.less',
 ], function (
     $,
@@ -36,7 +36,8 @@ define([
     Util,
     Hash,
     Sidebar,
-    Support
+    Support,
+    Icons
     )
 {
     var APP = {};
@@ -147,15 +148,19 @@ define([
                     h('span', Messages.support_pending),
                     h('span.cp-support-count'),
                 ]));
+                var col6 = h('div.cp-support-column', h('h1', [
+                    h('span', '[Automatic]'), // XXX
+                    h('span.cp-support-count'),
+                ]));
                 if (type === 'closed') {
                     // Only one column
-                    col1 = col2 = col3 = col4;
+                    col1 = col2 = col3 = col6 = col4;
                 }
                 if (type === 'pending') {
                     // Only one column
-                    col1 = col2 = col3 = col5;
+                    col1 = col2 = col3 = col6 = col5;
                 }
-                $container.append([col1, col2, col3]);
+                $container.append([col1, col2, col3, col6]);
 
                 const onShow = function (ticket, channel, data, done) {
                     onShowTicket(ticket, channel, data, (success) => {
@@ -241,8 +246,17 @@ define([
 
                 // Show tickets, reload the previously open ones and cal back
                 // once everything is loaded
+
                 let n = nThen;
-                Object.keys(tickets).sort(sortTicket(tickets)).forEach(function (channel) {
+                let sorted = Object.keys(tickets).sort(sortTicket(tickets));
+                let remaining = [];
+                const limit = 20;
+                if (type === 'closed') {
+                    remaining = sorted.slice(limit);
+                    sorted = sorted.slice(0, limit);
+                }
+
+                const addTicket = function (channel) {
                     // Update allTags
                     var d = tickets[channel];
                     (d.tags || []).forEach(tag => {
@@ -260,15 +274,40 @@ define([
                     var container;
                     if (d.lastAdmin) { container = col3; }
                     else if (d.premium) { container = col1; }
+                    else if (/\[Automatic\]/.test(d.title)) { container = col6; }
                     else { container = col2; }
                     $(container).append(ticket);
+
+                    const nb = $(container).find('.cp-support-list-ticket').length;
+                    $(container).find('.cp-support-count').text(nb);
 
                     if (open.includes(channel)) {
                         n = n(waitFor => {
                             ticket.open(true, waitFor());
                         }).nThen;
                     }
-                });
+                };
+
+                sorted.forEach(addTicket);
+
+                if (type === 'closed' && remaining.length) {
+                    const b = h('button.btn.btn-secondary', [
+                        Icons.get('export'),
+                        Messages.loadAll
+                    ]);
+                    const div = h('div.cp-support-list-ticket', [
+                        h('span', Messages._getKey('support_moreTickets', [
+                            remaining.length
+                        ])),
+                        h('span', b)
+                    ]);
+                    $(b).click(() => {
+                        remaining.forEach(addTicket);
+                        $(div).remove();
+                    });
+                    $(col2).append(div);
+                }
+
                 // Wait for all open tickets to be loaded before calling back
                 // otherwise we may have a wrong scroll position
                 n(() => {
@@ -309,7 +348,9 @@ define([
             }).nThen(waitFor => {
                 APP.allTags = [];
                 refresh($(activeContainer), 'active', waitFor());
+            }).nThen(waitFor => {
                 refresh($(pendingContainer), 'pending', waitFor());
+            }).nThen(waitFor => {
                 refresh($(closedContainer), 'closed', waitFor());
             }).nThen(() => {
                 onFilter();
@@ -342,7 +383,7 @@ define([
         // Make sidebar layout
         const categories = {
             'open': { // Msg.support_cat_open
-                icon: 'fa fa-inbox',
+                icon: 'inbox',
                 content: [
                     'refresh',
                     'filter',
@@ -351,7 +392,7 @@ define([
                 ]
             },
             'closed': { // Msg.support_cat_closed
-                icon: 'fa fa-archive',
+                icon: 'history-moderation',
                 content: [
                     'refresh',
                     'filter',
@@ -359,7 +400,7 @@ define([
                 ]
             },
             'search': { // Msg.support_cat_search
-                icon: 'fa fa-search',
+                icon: 'search',
                 content: [
                     'filter',
                     'search'
@@ -372,7 +413,7 @@ define([
                 }
             },
             'new': { // Msg.support_cat_new
-                icon: 'fa fa-envelope',
+                icon: 'support-ticket',
                 content: [
                     'open-ticket'
                 ],
@@ -384,13 +425,13 @@ define([
                 }
             },
             'legacy': { // Msg.support_cat_legacy
-                icon: 'fa fa-server',
+                icon: 'server',
                 content: [
                     'legacy'
                 ]
             },
             'settings': { // Msg.support_cat_settings
-                icon: 'fa fa-cogs',
+                icon: 'settings',
                 content: [
                     'privacy',
                     'notifications',
@@ -407,7 +448,7 @@ define([
         if (!APP.privateKey) { delete categories.legacy; }
 
         sidebar.addItem('refresh', cb => {
-            let button = blocks.button('secondary', 'fa-refresh', Messages.oo_refresh);
+            let button = blocks.button('secondary', 'refresh', Messages.oo_refresh);
             APP.$refreshButton = $(button);
             Util.onClickEnter($(button), () => {
                 APP.$refreshButton.prop('disabled', 'disabled');
@@ -420,7 +461,7 @@ define([
         // Msg.support_privacyHint.support_privacyTitle
         sidebar.addCheckboxItem({
             key: 'privacy',
-            getState: () => false,
+            getState: () => true,
             query: (val, setState) => {
                 APP.support.setAnonymous(val);
                 setState(val);
@@ -456,7 +497,7 @@ define([
         sidebar.addItem('search', cb => {
 
             let inputSearch = blocks.input({type:'text', class: 'cp-support-search-input'});
-            let button = blocks.button('primary', 'fa-search');
+            let button = blocks.button('primary', 'search');
             let inputBlock = blocks.inputButton(inputSearch, button, { onEnterDelegate: true });
             let searchBlock = blocks.labelledInput(Messages.support_searchLabel,
                                                     inputSearch, inputBlock);
@@ -536,7 +577,7 @@ define([
                 var existing = APP.allTags;
                 var list = h('div.cp-tags-list');
                 var reset = h('button.btn.btn-cancel.cp-tags-filter-reset', [
-                    h('i.fa.fa-times'),
+                    Icons.get('close'),
                     Messages.kanban_clearFilter
                 ]);
                 var hint = h('span', Messages.kanban_tags);
@@ -605,7 +646,6 @@ define([
                     $list.find('span').removeClass('active');
                     commitTags();
                 });
-
                 $container.append(tags);
             };
             events.REFRESH_TAGS.reg(redrawTags);
@@ -622,7 +662,7 @@ define([
             let labelId = blocks.labelledInput(Messages.support_recordedId, inputId);
             let labelContent = blocks.labelledInput(Messages.support_recordedContent, inputContent);
 
-            let create = blocks.button('primary', 'fa-plus', Messages.tag_add);
+            let create = blocks.button('primary', 'add', Messages.tag_add);
             let nav = blocks.nav([create]);
 
             let form = blocks.form([
@@ -662,7 +702,7 @@ define([
                     let messages = obj.messages;
                     $list.empty();
                     Object.keys(messages).forEach(id => {
-                        let del = blocks.button('danger-alt', 'fa-trash-o', Messages.kanban_delete);
+                        let del = blocks.button('danger-alt', 'trash-full', Messages.kanban_delete);
                         Util.onClickEnter($(del), () => {
                             edit(id, '', true);
                         });
@@ -722,10 +762,10 @@ define([
             let labelChan = blocks.labelledInput(Messages.support_userChannel, inputChan);
             let labelKey = blocks.labelledInput(Messages.support_userKey, inputKey);
 
-            let send = blocks.button('primary', 'fa-paper-plane', Messages.support_formButton);
+            let send = blocks.button('primary', 'send', Messages.support_formButton);
             let nav = blocks.nav([send]);
 
-            let reset = blocks.button('danger-alt', 'fa-times', Messages.form_reset);
+            let reset = blocks.button('danger-alt', 'restore', Messages.form_reset);
 
             let paste = blocks.textarea({
                 class: 'cp-support-newticket-paste',
@@ -797,9 +837,9 @@ define([
         sidebar.addItem('legacy', cb => {
             if (!APP.privateKey) { return void cb(false); }
 
-            let start = blocks.button('primary', 'fa-paper-plane', Messages.support_legacyButton);
-            let dump = blocks.button('secondary', 'fa-database', Messages.support_legacyDump);
-            let clean = blocks.button('danger', 'fa-trash-o', Messages.support_legacyClear);
+            let start = blocks.button('primary', 'send', Messages.support_legacyButton);
+            let dump = blocks.button('secondary', 'database', Messages.support_legacyDump);
+            let clean = blocks.button('danger', 'trash-full', Messages.support_legacyClear);
             let content = h('div.cp-support-container');
             let nav = blocks.nav([start, dump, clean]);
             let spinner = UI.makeSpinner($(nav));
@@ -949,6 +989,7 @@ Attachments:${JSON.stringify(msg.attachments, 0, 2)}`;
             $container: APP.$toolbar,
             pageTitle: Messages.moderationPage,
             metadataMgr: common.getMetadataMgr(),
+            skipLink: '#cp-sidebarlayout-container'
         };
         APP.toolbar = Toolbar.create(configTb);
         APP.toolbar.$rightside.hide();
@@ -988,6 +1029,7 @@ Attachments:${JSON.stringify(msg.attachments, 0, 2)}`;
             }
         });
         APP.support = Support.create(common, true);
+        APP.support.setAnonymous(true);
 
         let active = privateData.category || 'active';
         let linkedTicket;

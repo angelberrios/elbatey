@@ -16,11 +16,12 @@ define([
     '/customize/messages.js',
     '/components/nthen/index.js',
     '/customize/pages.js',
+    '/common/common-icons.js',
 
     '/components/file-saver/FileSaver.min.js',
     '/lib/qrcode.min.js',
 ], function ($, ApiConfig, Util, Hash, UI, UIElements, Feedback, Modal, h, Clipboard,
-             Messages, nThen, Pages) {
+             Messages, nThen, Pages, Icons) {
     var Share = {};
 
     var embeddableApps = [
@@ -93,7 +94,7 @@ define([
         var shareButton = {
             className: 'primary cp-share-with-friends',
             name: Messages.share_withFriends,
-            iconClass: '.fa.fa-shhare-alt',
+            iconClass: 'share',
             onClick: function () {
                 var href;
                 nThen(function (waitFor) {
@@ -264,47 +265,35 @@ define([
         });
         return teams;
     };
-    var makeBurnAfterReadingUrl = function (common, href, channel, cb) {
-        var keyPair = Hash.generateSignPair();
-        var parsed = Hash.parsePadUrl(href);
-        var newHref = parsed.getUrl({
+    const makeBurnAfterReadingUrl = (common, href, channel, opts, cb) => {
+        const keyPair = Hash.generateSignPair();
+        const parsed = Hash.parsePadUrl(href);
+        const newHref = parsed.getUrl({
             ownerKey: keyPair.safeSignKey
         });
-        var sframeChan = common.getSframeChannel();
-        var rtChannel;
-        nThen(function (waitFor) {
-            if (parsed.type !== "sheet") { return; }
-            common.getPadAttribute('rtChannel', waitFor(function (err, chan) {
-                rtChannel = chan;
-            }));
-        }).nThen(function (waitFor) {
+        const sframeChan = common.getSframeChannel();
+        const priv = common.getMetadataMgr().getPrivateData();
+        const { otherChan } = Modal.getOtherChans(priv, opts);
+        nThen((waitFor) => {
             sframeChan.query('Q_SET_PAD_METADATA', {
                 channel: channel,
+                channels: otherChan,
                 command: 'ADD_OWNERS',
                 value: [keyPair.validateKey]
-            }, waitFor(function (err) {
+            }, waitFor((err) => {
                 if (err) {
                     waitFor.abort();
                     UI.warn(Messages.error);
                 }
             }));
-            if (rtChannel) {
-                sframeChan.query('Q_SET_PAD_METADATA', {
-                    channel: rtChannel,
-                    command: 'ADD_OWNERS',
-                    value: [keyPair.validateKey]
-                }, waitFor(function (err) {
-                    if (err) { console.error(err); }
-                }));
-            }
-        }).nThen(function () {
+        }).nThen(() => {
             cb(newHref);
         });
     };
 
     var makeFaqLink = function (opts) {
         var link = h('span', [
-            h('i.fa.fa-question-circle'),
+            Icons.get('help'),
             h('a', {href: '#'}, Messages.passwordFaqLink)
         ]);
         $(link).click(function () {
@@ -355,7 +344,7 @@ define([
         // Show alert if the pad is password protected
         if (opts.hasPassword) {
             $contactsContent.append(h('div.alert.alert-primary', [
-                h('i.fa.fa-unlock'),
+                Icons.get('access'),
                 Messages.share_contactPasswordAlert, h('br'),
                 makeFaqLink(opts)
             ]));
@@ -396,7 +385,7 @@ define([
         // Show alert if the pad is password protected
         if (opts.hasPassword) {
             linkContent.push(h('div.alert.alert-primary', [
-                h('i.fa.fa-lock'),
+                Icons.get('lock'),
                 Messages.share_linkPasswordAlert, h('br'),
                 makeFaqLink(opts)
             ]));
@@ -407,7 +396,7 @@ define([
         // to avoid alert fatigue
         if (!opts.versionHash && !opts.static) {
             var localStore = window.cryptpadStore;
-            var dismissButton = h('span.fa.fa-times');
+            var dismissButton = h('span', [Icons.get('close')]);
             var shareLinkWarning = h('div.alert.alert-warning.dismissable',
                 { style: 'display: none;' },
                 [
@@ -443,7 +432,7 @@ define([
             !opts.sharedFolder && {
                 className: 'secondary cp-nobar',
                 name: Messages.share_linkOpen,
-                iconClass: '.fa.fa-eye',
+                iconClass: 'preview',
                 onClick: function () {
                     opts.saveValue();
                     var v = opts.getLinkValue({
@@ -460,7 +449,7 @@ define([
             }, {
                 className: 'primary cp-nobar',
                 name: Messages.share_linkCopy,
-                iconClass: '.fa.fa-link',
+                iconClass: 'link',
                 onClick: function () {
                     opts.saveValue();
                     var v = opts.getLinkValue({
@@ -476,7 +465,7 @@ define([
                 name:  Messages.share_bar,
                 onClick: function () {
                     var barHref = origin + pathname + '#' + (hashes.viewHash || hashes.editHash);
-                    makeBurnAfterReadingUrl(common, barHref, opts.channel, function (url) {
+                    makeBurnAfterReadingUrl(common, barHref, opts.channel, opts, function (url) {
                         opts.burnAfterReadingUrl = url;
                         opts.$rights.find('input[type="radio"]').trigger('change');
                     });
@@ -532,7 +521,7 @@ define([
             {
                 className: 'primary cp-nobar',
                 name: Messages.download_dl,
-                iconClass: '.fa.fa-download',
+                iconClass: 'download',
                 onClick: function () {
                     qr.querySelector('canvas').toBlob(blob => {
                         var name = Util.fixFileName((opts.title || 'document') + '-qr.png');
@@ -559,7 +548,7 @@ define([
         // Show alert if the pad is password protected
         if (opts.hasPassword) {
             embedContent.push(h('div.alert.alert-primary', [
-                h('i.fa.fa-lock'), ' ',
+                Icons.get('lock'), ' ',
                 Messages.share_embedPasswordAlert, h('br'),
                 makeFaqLink(opts)
             ]));
@@ -570,7 +559,7 @@ define([
             {
                 className: 'primary',
                 name: Messages.share_linkCopy,
-                iconClass: '.fa.fa-link',
+                iconClass: 'link',
                 onClick: function () {
                     Feedback.send('SHARE_EMBED');
                     var v = opts.getEmbedValue();
@@ -631,6 +620,7 @@ define([
                             labelEdit, false, { mark: {tabindex:0} }),
             auditor]),
             burnAfterReading,
+
         ]);
 
         // Burn after reading
@@ -683,7 +673,7 @@ define([
             if (burnAfterReading && !opts.burnAfterReadingUrl) {
                 if (cb) { // Called from the contacts tab, "share" button
                     var barHref = origin + pathname + '#' + (hashes.viewHash || hashes.editHash);
-                    return makeBurnAfterReadingUrl(common, barHref, channel, function (url) {
+                    return makeBurnAfterReadingUrl(common, barHref, channel, opts, function (url) {
                         cb(url);
                     });
                 }
@@ -693,6 +683,9 @@ define([
                                                                        : hashes.viewHash;
             if (formAuditor && opts.auditorHash) {
                 hash = opts.auditorHash;
+                if (opts.hasPassword) {
+                    hash += '/p';
+                }
             }
             var href = burnAfterReading ? opts.burnAfterReadingUrl
                                              : (origin + pathname + '#' + hash);
@@ -705,14 +698,17 @@ define([
             });
             return '<iframe src="' + url + '"></iframe>';
         };
-
         // disable edit share options if you don't have edit rights
         if (versionHash) {
             $rights.find('#cp-share-editable-false').attr('checked', true);
             $rights.find('#cp-share-present').removeAttr('checked').attr('disabled', true);
             $rights.find('#cp-share-editable-true').removeAttr('checked').attr('disabled', true);
         } else if (!hashes.editHash) {
-            $rights.find('#cp-share-editable-false').attr('checked', true);
+            if (opts.auditorHash) {
+                $rights.find('#cp-share-editable-false').attr('checked', false).attr('disabled', true);
+            } else {
+                $rights.find('#cp-share-editable-false').attr('checked', true);
+            }
             $rights.find('#cp-share-editable-true').removeAttr('checked').attr('disabled', true);
         } else if (!hashes.viewHash) {
             $rights.find('#cp-share-editable-false').removeAttr('checked').attr('disabled', true);
@@ -769,7 +765,12 @@ define([
                 $rights.find('#cp-share-editable-true').prop('checked', false);
                 $rights.find('#cp-share-present').prop('checked', true);
             } else if ((val.edit === false && hashes.viewHash) || !hashes.editHash) {
-                $rights.find('#cp-share-editable-false').prop('checked', true);
+                if (opts.auditorHash) {
+                    $rights.find('#cp-share-editable-false').prop('checked', false);
+                    $rights.find('#cp-share-form').prop('checked', true);
+                } else {
+                    $rights.find('#cp-share-editable-false').prop('checked', true);
+                }
                 $rights.find('#cp-share-editable-true').prop('checked', false);
                 $rights.find('#cp-share-present').prop('checked', false);
             } else {
@@ -786,6 +787,9 @@ define([
         common.getMetadataMgr().onChange(function () {
             // "hashes" is only available is the secure "share" app
             var _hashes = common.getMetadataMgr().getPrivateData().hashes;
+            const h = _hashes.editHash || _hashes.viewHash;
+            const c = Hash.getSecrets('pad', h, opts.password).channel;
+            if (channel !== c) { return; }
             if (!_hashes) { return; }
             hashes = _hashes;
             getLink().val(opts.getLinkValue());
@@ -845,25 +849,25 @@ define([
         var tabs = [{
             getTab: getContactsTab,
             title: Messages.share_contactCategory,
-            icon: "fa fa-address-book",
+            icon: "contacts",
             active: contactsActive,
             onShow: onShowContacts,
             onHide: resetTab
         }, {
             getTab: getLinkTab,
             title: Messages.share_linkCategory,
-            icon: "fa fa-link",
+            icon: "link",
             active: !contactsActive,
         }, window.CP_DEV_MODE ? { // NEXT enable for all
             getTab: getQRTab,
             title: Messages.share_QRCategory,
-            icon: 'fa fa-qrcode',
+            icon: 'qr-code',
         } : undefined].filter(Boolean);
         if (!opts.static && ApiConfig.enableEmbedding && embeddableApps.includes(pathname)) {
             tabs.push({
                 getTab: getEmbedTab,
                 title: Messages.share_embedCategory,
-                icon: "fa fa-code",
+                icon: "code",
                 onShow: onShowEmbed,
                 onHide: resetTab
             });
@@ -879,7 +883,7 @@ define([
             // Add the versionHash warning if needed
             if (opts.versionHash) {
                 $rights.after(h('div.alert.alert-warning', [
-                    h('i.fa.fa-history'),
+                    Icons.get('history'),
                     UI.setHTML(h('span'), Messages.share_versionHash)
                 ]));
             }
@@ -902,7 +906,7 @@ define([
         // Show alert if the pad is password protected
         if (opts.hasPassword) {
             $contactsContent.append(h('div.alert.alert-primary', [
-                h('i.fa.fa-lock'),
+                Icons.get('lock'),
                 Messages.share_linkPasswordAlert, h('br'),
                 makeFaqLink(opts)
             ]));
@@ -928,7 +932,7 @@ define([
         // Show alert if the pad is password protected
         if (opts.hasPassword) {
             linkContent.push(h('div.alert.alert-primary', [
-                h('i.fa.fa-lock'),
+                Icons.get('lock'),
                 Messages.share_linkPasswordAlert, h('br'),
                 makeFaqLink(opts)
             ]));
@@ -936,7 +940,7 @@ define([
 
         // warning about sharing links
         var localStore = window.cryptpadStore;
-        var dismissButton = h('span.fa.fa-times');
+        var dismissButton = Icons.get('close');
         var shareLinkWarning = h('div.alert.alert-warning.dismissable',
             { style: 'display: none;' },
             [
@@ -961,7 +965,7 @@ define([
             {
                 className: 'primary',
                 name: Messages.share_linkCopy,
-                iconClass: '.fa.fa-link',
+                iconClass: 'link',
                 onClick: function () {
                     var v = opts.getLinkValue();
                     Clipboard.copy(v, (err) => {
@@ -993,7 +997,7 @@ define([
         // Show alert if the pad is password protected
         if (opts.hasPassword) {
             $(embed).append(h('div.alert.alert-primary', [
-                h('i.fa.fa-lock'),
+                Icons.get('lock'),
                 Messages.share_linkPasswordAlert, h('br'),
                 makeFaqLink(opts)
             ]));
@@ -1007,7 +1011,7 @@ define([
         }, {
             className: 'primary',
             name: Messages.share_mediatagCopy,
-            iconClass: '.fa.fa-link',
+            iconClass: 'link',
             onClick: function () {
                 var v = common.getMediatagFromHref(opts.fileData);
                 Clipboard.copy(v, (err) => {
@@ -1047,12 +1051,12 @@ define([
         var tabs = [{
             getTab: getFileContactsTab,
             title: Messages.share_contactCategory,
-            icon: "fa fa-address-book",
+            icon: "contacts",
             active: hasFriends,
         }, {
             getTab: getFileLinkTab,
             title: Messages.share_linkCategory,
-            icon: "fa fa-link",
+            icon: "link",
             active: !hasFriends,
         }];
 
@@ -1061,7 +1065,7 @@ define([
             tabs.push({
                 getTab: getFileEmbedTab,
                 title: Messages.share_embedCategory,
-                icon: "fa fa-code",
+                icon: "code",
             });
         }
 

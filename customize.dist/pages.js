@@ -10,8 +10,11 @@ define([
     '/customize/messages.js',
     'jquery',
     '/api/config',
+    '/common/extensions.js',
     'optional!/api/instance',
-], function (h, Language, Util, AppConfig, Msg, $, ApiConfig, Instance) {
+    '/common/common-icons.js',
+], function (h, Language, Util, AppConfig, Msg, $, ApiConfig,
+            Extensions, Instance, Icons) {
     var Pages = {};
 
     Pages.setHTML = function (e, html) {
@@ -49,15 +52,8 @@ define([
         return Pages.externalLink(el, Pages.localizeDocsLink(href));
     };
 
-    var accounts = Pages.accounts = {
+    Pages.accounts = {
         donateURL: AppConfig.donateURL || "https://opencollective.com/cryptpad/",
-        upgradeURL: AppConfig.upgradeURL
-    };
-
-    Pages.areSubscriptionsAllowed = function () {
-        try {
-            return ApiConfig.allowSubscriptions && accounts.upgradeURL && !ApiConfig.restrictRegistration;
-        } catch (err) { return void console.error(err); }
     };
 
     var languageSelector = function () {
@@ -82,8 +78,8 @@ define([
         if (!ref) { return; }
         var attrs =  {
             href: ref,
+            role: 'button',
         };
-        var iconName = '';
         if (!/^\//.test(ref)) {
             attrs.target = '_blank';
             attrs.rel = 'noopener noreferrer';
@@ -93,8 +89,7 @@ define([
             text = Msg[loc];
         }
         if (icon) {
-            iconName = 'i.fa.fa-' + icon;
-            icon = h(iconName);
+            icon = Icons.get(icon);
         }
         return h('a', attrs, [icon, text]);
     };
@@ -155,12 +150,12 @@ define([
     Pages.infopageFooter = function () {
         var donateButton;
         if (!ApiConfig.removeDonateButton) {
-            donateButton = footLink('https://opencollective.com/cryptpad/contribute/', 'footer_donate', null, 'money'); // TODO migrate to forkawesome and use the OpenCollective icon
+            donateButton = footLink('https://opencollective.com/cryptpad/contribute/', 'footer_donate', null, 'donate'); // TODO migrate to forkawesome and use the OpenCollective icon
         }
 
         return h('footer.cp-footer', [
             h('div.cp-footer-left', [
-                h('a', {href:"https://cryptpad.org"}, [
+                h('a', {href:"https://cryptpad.org", role: 'button'}, [
                     h('div.cp-logo-foot', [
                         h('img', {
                             src: '/customize/CryptPad_logo.svg',
@@ -180,7 +175,7 @@ define([
             ]),
             h('div.cp-footer-right', [
                 h('div.cp-footer-language', [
-                    h('i.fa.fa-language', {'aria-hidden': 'true'}),
+                    Icons.get('language'),
                     languageSelector()
                 ])
             ])
@@ -193,31 +188,31 @@ define([
         var registerLink;
 
         if (!ApiConfig.restrictRegistration) {
-            registerLink = h('a.nav-item.nav-link.cp-register-btn', { href: '/register/'}, [
-                h('i.fa.fa-user', {'aria-hidden':'true'}),
+            registerLink = h('a.nav-item.nav-link.cp-register-btn', { href: '/register/', role: 'button'}, [
+                Icons.get('user-account'),
                 Msg.login_register
             ]);
         }
 
         if (username === null) {
             rightLinks = [
-                h('a.nav-item.nav-link.cp-login-btn', { href: '/login/'}, [
-                    h('i.fa.fa-sign-in', {'aria-hidden':'true'}),
+                h('a.nav-item.nav-link.cp-login-btn', { href: '/login/', role: 'button'}, [
+                    Icons.get('login'),
                     Msg.login_login
                 ]),
                 registerLink,
             ];
         } else {
-            rightLinks = h('a.nav-item.nav-link.cp-user-btn', { href: '/drive/' }, [
-                h('i.fa.fa-user-circle', {'aria-hidden':'true'}),
+            rightLinks = h('a.nav-item.nav-link.cp-user-btn', { href: '/drive/', role: 'button'}, [
+                Icons.get('user-profile'),
                 " ",
                 username
             ]);
         }
 
         var isHome = ['/', '/index.html'].includes(window.location.pathname);
-        var homeLink = h('a.nav-item.nav-link.cp-back-home' /* .navbar-brand */, { href: '/index.html' }, [
-            h('i.fa.fa-arrow-left'),
+        var homeLink = h('a.nav-item.nav-link.cp-back-home' /* .navbar-brand */, { href: '/index.html', role: 'button'}, [
+            Icons.get('chevron-left'),
             h('img', {
                 src: '/customize/CryptPad_logo.svg',
                 "aria-hidden": true,
@@ -226,15 +221,23 @@ define([
             Msg.homePage
         ]);
 
+        let pricingName = Msg.features;
+        Extensions.getExtensionsSync('PRICING_NAME').some(ext => {
+            if (!ext.name) { return; }
+            pricingName = ext.name;
+            return true;
+        });
+
         return h('nav.navbar.navbar-expand-lg',
             [
                 !isHome? homeLink: undefined,
-                h('a.nav-item.nav-link', { href: '/features.html'}, [
-                    h('i.fa.fa-info-circle'),
-                    Pages.areSubscriptionsAllowed()? Msg.pricing: Msg.features
+                h('a.nav-item.nav-link', { href: '/features.html', role: 'button'}, [
+                    Icons.get('properties'),
+                    pricingName
                 ]),
-                h('a.nav-item.nav-link', { href: 'https://docs.cryptpad.org'},
-                    [h('i.fa.fa-book', {'aria-hidden':'true'}),Msg.docs_link]),
+                h('a.nav-item.nav-link', { href: 'https://docs.cryptpad.org'}, [
+                    Icons.get('documentation'),
+                    Msg.docs_link]),
             ].concat(rightLinks)
         );
     };

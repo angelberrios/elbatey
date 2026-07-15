@@ -18,7 +18,6 @@ define([
     '/customize/messages.js',
 
     'css!/components/bootstrap/dist/css/bootstrap.min.css',
-    'css!/components/components-font-awesome/css/font-awesome.min.css',
     'less!/drive/app-drive.less',
 ], function (
     $,
@@ -42,7 +41,19 @@ define([
         for (var k in objRef) { delete objRef[k]; }
         $.extend(true, objRef, objToCopy);
     };
-    var updateSharedFolders = function (sframeChan, manager, drive, folders, cb) {
+    var lockoutAnonSharedFolder = function (common) {
+        APP.newSharedFolder = null;
+        APP.closed = true;
+        var msg = Messages.restrictedError;
+        if (common && !common.isLoggedIn()) {
+            msg = UIElements.loginErrorScreenContent(common);
+        }
+        setTimeout(function () {
+            UI.errorLoadingScreen(msg, false, false);
+        }, 0);
+    };
+
+    var updateSharedFoldersCore = function (common, sframeChan, manager, drive, folders, cb) {
         if (!drive || !drive.sharedFolders) {
             return void cb();
         }
@@ -58,6 +69,12 @@ define([
                     sharedFolder: fId
                 }, waitFor(function (err, newObj) {
                     if (!APP.loggedIn && APP.newSharedFolder) {
+                        if (newObj && newObj.restricted) {
+                            lockoutAnonSharedFolder(common);
+                            waitFor.abort();
+                            return;
+                        }
+                        if (err) { return; }
                         if (!newObj || !Object.keys(newObj).length) {
                             // Empty anon drive: deleted
                             var msg = Messages.deletedError + '<br>' + Messages.errorRedirectToHome;
@@ -103,6 +120,11 @@ define([
         }).nThen(function () {
             cb();
         });
+    };
+    var updateSharedFolders = function (common) {
+        return function (sframeChan, manager, drive, folders, cb) {
+            updateSharedFoldersCore(common, sframeChan, manager, drive, folders, cb);
+        };
     };
     var updateObject = function (sframeChan, obj, cb) {
         sframeChan.query('Q_DRIVE_GETOBJECT', null, function (err, newObj) {
@@ -282,7 +304,7 @@ define([
                 APP.$burnThisDrive = common.createButton(null, true, {
                     text: '',
                     name: 'burn-anon-drive',
-                    icon: 'fa-ban',
+                    icon: 'burn-drive',
                     tippy: Messages.fm_burnThisDriveButton,
                     drawer: false
                 }, function () {
@@ -304,7 +326,7 @@ define([
                 proxy: proxy,
                 folders: folders,
                 updateObject: updateObject,
-                updateSharedFolders: updateSharedFolders,
+                updateSharedFolders: updateSharedFolders(common),
                 history: history,
                 toolbar: toolbar,
                 APP: APP

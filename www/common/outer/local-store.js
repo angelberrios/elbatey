@@ -5,7 +5,7 @@
 define([
     '/common/common-constants.js',
     '/common/common-hash.js',
-    '/common/outer/cache-store.js',
+    '/common/cache-store.js',
     '/components/localforage/dist/localforage.min.js',
     '/customize/application_config.js',
     '/common/common-util.js',
@@ -151,8 +151,8 @@ define([
         sessionStorage.clear();
         try {
             Object.keys(localStorage || {}).forEach(function (k) {
-                // Remvoe everything in localStorage except CACHE and FS_hash
-                if (/^CRYPTPAD_CACHE/.test(k) || /^LESS_CACHE/.test(k) || k === Constants.fileHashKey || /^CRYPTPAD_STORE|colortheme/.test(k)) { return; }
+                // Remove everything in localStorage except CACHE and FS_hash
+                if (/^CRYPTPAD_CACHE/.test(k) || /^LESS_CACHE/.test(k) || k === Constants.fileHashKey || /^CRYPTPAD_STORE|colortheme/.test(k) || (!isDeletion && /^cp_crowdfunding_/.test(k))) { return; }
                 delete localStorage[k];
             });
         } catch (e) { console.error(e); }

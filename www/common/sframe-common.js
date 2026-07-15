@@ -8,7 +8,7 @@ define([
     '/components/nthen/index.js',
     '/customize/messages.js',
     '/common/sframe-chainpad-netflux-inner.js',
-    '/common/outer/worker-channel.js',
+    '/common/events-channel.js',
     '/common/sframe-common-title.js',
     '/common/common-ui-elements.js',
     '/common/sframe-common-history.js',
@@ -34,7 +34,8 @@ define([
     '/common/common-constants.js',
     '/components/localforage/dist/localforage.min.js',
     '/common/hyperscript.js',
-    '/common/extensions.js'
+    '/common/extensions.js',
+    '/common/common-icons.js'
 ], function (
     $,
     ApiConfig,
@@ -66,7 +67,8 @@ define([
     Constants,
     localForage,
     h,
-    Ext
+    Ext,
+    Icons
 ) {
     // Chainpad Netflux Inner
     var funcs = {};
@@ -89,6 +91,19 @@ define([
     funcs.getMetadataMgr = function () { return ctx.metadataMgr; };
     funcs.getSframeChannel = function () { return ctx.sframeChan; };
     funcs.getAppConfig = function () { return AppConfig; };
+
+    funcs.onAccountOnline = function (f) {
+        const metadataMgr = ctx.metadataMgr;
+        const cb = Util.once(f);
+        const todo = () => {
+            const priv = metadataMgr.getPrivateData();
+            if (priv.offline !== false) { return; }
+            cb(metadataMgr);
+            metadataMgr.off('change', todo);
+        };
+        metadataMgr.onChange(todo);
+        todo();
+    };
 
     funcs.isLoggedIn = function () {
         return ctx.metadataMgr.getPrivateData().loggedIn;
@@ -751,7 +766,9 @@ define([
             // Ctrl || Meta (mac)
             if (e.ctrlKey || (navigator.platform === "MacIntel" && e.metaKey)) {
                 // Ctrl+E: New pad modal
+                var priv = ctx.metadataMgr.getPrivateData();
                 if (e.which === 69 && isApp) {
+                    if (priv.app === 'form' && priv.readOnly && !priv.form_auditorHash && !priv.form_auditorKey) { return; }
                     e.preventDefault();
                     return void funcs.createNewPadModal();
                 }
@@ -840,7 +857,9 @@ define([
             ctx.sframeChan.on("EV_PAD_NODATA", function () {
                 var error = Pages.setHTML(h('span'), Messages.safeLinks_error);
                 var i = error.querySelector('i');
-                if (i) { i.classList = 'fa fa-shhare-alt'; }
+                if (i) {
+                    $(i).empty().append(Icons.get('share'));
+                }
                 var a = error.querySelector('a');
                 if (a) {
                     a.setAttribute('href', Pages.localizeDocsLink("https://docs.cryptpad.org/en/user_guide/user_account.html#confidentiality"));
@@ -933,7 +952,7 @@ define([
                 }
                 UI.errorLoadingScreen(msg, false, function () {
                     funcs.gotoURL('/drive/');
-                });
+                }, true);
             });
 
             ctx.sframeChan.on('EV_UNIVERSAL_EVENT', function (obj) {
@@ -1044,10 +1063,16 @@ define([
                 document.title = title;
             });
 
-            funcs.isPadStored(function (err, val) {
-                if (err || !val) { return; }
+            var showCrowdfunding = function () {
                 UIElements.displayCrowdfunding(funcs);
-            });
+            };
+            var privateData = ctx.metadataMgr.getPrivateData();
+            var isDriveContext = privateData.app === 'drive';
+            var isReadOnlyFormResponse = privateData.app === 'form' && privateData.readOnly && !privateData.form_auditorHash && !privateData.form_auditorKey;
+            var skipCrowdfunding = privateData.secureIframe === true || privateData.unsafeIframe === true || isReadOnlyFormResponse || isDriveContext;
+            if (!skipCrowdfunding) {
+                ctx.sframeChan.query('Q_CROWDFUNDING_INCREMENT_OPEN', {}, showCrowdfunding);
+            }
 
             ctx.sframeChan.ready();
 

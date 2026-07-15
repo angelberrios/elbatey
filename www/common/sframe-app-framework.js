@@ -24,7 +24,6 @@ define([
 
     '/components/file-saver/FileSaver.min.js',
     'css!/components/bootstrap/dist/css/bootstrap.min.css',
-    'css!/components/components-font-awesome/css/font-awesome.min.css',
 ], function (
     $,
     Hyperjson,
@@ -648,8 +647,12 @@ define([
                     const integrationHasUnsavedChanges = function(unsavedChanges, cb) {
                         integrationChannel.query('Q_INTEGRATION_HAS_UNSAVED_CHANGES', unsavedChanges, cb);
                     };
+                    const onUserlistChange = (list) => {
+                        integrationChannel.event('Q_INTEGRATION_USERLIST_CHANGE', list);
+                    };
                     var inte = common.createIntegration(integrationSave,
-                                            integrationHasUnsavedChanges);
+                                            integrationHasUnsavedChanges,
+                                            onUserlistChange);
                     if (inte) {
                         integration = true;
                         evIntegrationSave.reg(function () {
@@ -663,12 +666,21 @@ define([
                                 cb();
                             });
                         });
+                        integrationChannel.on('EV_INTEGRATION_MANUAL_SAVE', function () {
+                            integrationSave(function () {
+                                console.log('Integration manual save');
+                            });
+                        });
                     }
                 }
 
                 firstConnection = false;
 
                 UI.removeLoadingScreen(emitResize);
+
+                if (integrationChannel) {
+                    integrationChannel.event('EV_INTEGRATION_READY');
+                }
 
                 if (AppConfig.textAnalyzer && textContentGetter) {
                     AppConfig.textAnalyzer(textContentGetter, privateDat.channel);
@@ -776,7 +788,11 @@ define([
         };
 
         var setFileImporter = function (options, fi, async) {
-            if (readOnly) { return; }
+            const priv = cpNfInner.metadataMgr.getPrivateData();
+            const isReadOnlyIntegration = priv.isNewFile &&
+                Boolean(priv.integrationConfig) &&
+                priv.initialState;
+            if (readOnly && !isReadOnlyIntegration) { return; }
             fileImporter = function (c, f) {
                 if (state !== STATE.READY || unsyncMode) {
                     return void UI.warn(Messages.disconnected);

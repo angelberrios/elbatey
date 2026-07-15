@@ -15,10 +15,10 @@ define([
     '/common/common-feedback.js',
     '/common/outer/local-store.js',
     '/common/hyperscript.js',
+    '/common/extensions.js',
     '/customize/pages.js',
-
-    'css!/components/components-font-awesome/css/font-awesome.min.css',
-], function (Config, $, Login, Cryptpad, Cred, UI, Util, Realtime, Constants, Feedback, LocalStore, h, Pages) {
+    '/common/common-icons.js',
+], function (Config, $, Login, Cryptpad, Cred, UI, Util, Realtime, Constants, Feedback, LocalStore, h, Extensions, Pages, Icons) {
     if (window.top !== window) { return; }
     var Messages = Cryptpad.Messages;
     $(function () {
@@ -146,18 +146,40 @@ define([
                 return void UI.alert(Messages.register_mustAcceptTerms);
             }
 
+            const extensions = [];
+            Extensions.getExtensionsSync('POST_REGISTER').forEach(ext => {
+                try {
+                    extensions.push(ext);
+                } catch (error) {
+                    console.error(error);
+                }
+            });
+            const cb = (data) => {
+                // data.edPublic, data.edPrivate
+                const next = Util.mkAsync(() => {
+                    Login.redirect();
+                });
+                if (!extensions.length) {
+                    next();
+                } else {
+                    extensions.forEach(ext => {
+                        const content = ext.getContent(data);
+                        UI.emptyLoadingScreen(content);
+                    });
+                }
+                return true;
+            };
+
             setTimeout(function () {
                 var span = h('span', [
                     h('h2', [
-                        h('i.fa.fa-warning'),
+                        Icons.get('alert'),
                         ' ',
                         Messages.register_warning,
                     ]),
                     Messages.register_warning_note
                 ]);
-
-            UI.confirm(span,
-            function (yes) {
+            UI.confirm(span, function (yes) {
                 if (!yes) { return; }
 
                 Login.loginOrRegisterUI({
@@ -166,7 +188,8 @@ define([
                     token,
                     isRegister: true,
                     shouldImport,
-                    onOTP: UI.getOTPScreen
+                    onOTP: UI.getOTPScreen,
+                    cb
                 });
             }, {
                 ok: Messages.register_writtenPassword,

@@ -15,6 +15,10 @@ PROPS_FILE="$CONF_DIR"/onlyoffice.properties
 declare -A PROPS
 
 main() {
+
+    # clean build env in case a previous build has failed
+    rm -rf "$BUILDS_DIR"
+    
     mkdir -p "$CONF_DIR"
 
     load_props
@@ -23,18 +27,85 @@ main() {
 
     ask_for_license
 
-    # Remeber the 1st version that is installed. This will help us install only
-    # needed OnlyOffice versions in a later version of this script.
-    set_prop oldest_needed_version v1
+    # Check if 'oldest_needed_version' is already set, if not, set it to v9
+    if [ -z "${PROPS['oldest_needed_version']+set}" ]; then
+        echo "'oldest_needed_version' is not set. Setting it to v9."
+        set_prop "oldest_needed_version" "v9"
+    else
+        echo "'oldest_needed_version' is already set to ${PROPS['oldest_needed_version']}. No changes made."
+    fi
 
     mkdir -p "$OO_DIR"
-    install_version v1 4f370beb
-    install_version v2b d9da72fd
-    install_version v4 6ebc6938
-    install_version v5 88a356f0
-    install_version v6 abd8a309
-    install_version v7 e1267803
-    install_x2t v7.3+1 ab0c05b0e4c81071acea83f0c6a8e75f5870c360ec4abc4af09105dd9b52264af9711ec0b7020e87095193ac9b6e20305e446f2321a541f743626a598e5318c1
+
+    available_versions=(v1 v2b v4 v5 v6 v7 v8 v9 x2t)
+
+    start_installing=false
+    for version in "${available_versions[@]}"; do
+        if [ "$start_installing" = true ]; then
+            selected_versions+=("$version")
+        elif [ "$version" = "${PROPS['oldest_needed_version']}" ]; then
+            start_installing=true
+            selected_versions+=("$version")
+        fi
+    done
+    
+
+    for version in "${selected_versions[@]}"; do
+        case $version in
+            v1)  
+                set_prop oldest_needed_version v1; install_old_version v1 4f370beb
+                # We delete 'help' from previous versions as they are useless and take up storage
+                rm -rf "$OO_DIR/v1/web-apps/apps/documenteditor/main/resources/help"
+                rm -rf "$OO_DIR/v1/web-apps/apps/presentationeditor/main/resources/help" 
+                rm -rf "$OO_DIR/v1/web-apps/apps/spreadsheeteditor/main/resources/help"
+                ;;
+            v2b) 
+                install_old_version v2b d9da72fd
+                rm -rf "$OO_DIR/v2b/web-apps/apps/documenteditor/main/resources/help"
+                rm -rf "$OO_DIR/v2b/web-apps/apps/presentationeditor/main/resources/help" 
+                rm -rf "$OO_DIR/v2b/web-apps/apps/spreadsheeteditor/main/resources/help"
+                ;;
+            v4)  
+                install_old_version v4 6ebc6938
+                rm -rf "$OO_DIR/v4/web-apps/apps/documenteditor/main/resources/help"
+                rm -rf "$OO_DIR/v4/web-apps/apps/presentationeditor/main/resources/help" 
+                rm -rf "$OO_DIR/v4/web-apps/apps/spreadsheeteditor/main/resources/help"
+                ;;
+            v5)  
+                install_old_version v5 88a356f0 
+                rm -rf "$OO_DIR/v5/web-apps/apps/documenteditor/main/resources/help"
+                rm -rf "$OO_DIR/v5/web-apps/apps/presentationeditor/main/resources/help" 
+                rm -rf "$OO_DIR/v5/web-apps/apps/spreadsheeteditor/main/resources/help"
+                ;;
+            v6)  
+                install_old_version v6 abd8a309
+                rm -rf "$OO_DIR/v6/web-apps/apps/documenteditor/main/resources/help"
+                rm -rf "$OO_DIR/v6/web-apps/apps/presentationeditor/main/resources/help" 
+                rm -rf "$OO_DIR/v6/web-apps/apps/spreadsheeteditor/main/resources/help"
+                ;;
+            v7)  
+                install_version v7 v7.3.3.60+11 1e65be6dc87d97e82b4972f303956e5397b34d637ca80a4239c48e49ab829ee5afc8f5b1680b2fb14230d63ff872ec5f9b562bb6c3f1811316b68f8b436f7ee6
+                rm -rf "$OO_DIR/v7/web-apps/apps/documenteditor/main/resources/help"
+                rm -rf "$OO_DIR/v7/web-apps/apps/presentationeditor/main/resources/help" 
+                rm -rf "$OO_DIR/v7/web-apps/apps/spreadsheeteditor/main/resources/help"
+                rm -rf "$OO_DIR/v7/web-apps/apps/common/main/resources/help/"
+                # From all the older versions only v7 has 'dictionaries', we remove it for the same reasons
+                rm -rf "$OO_DIR/v7/dictionaries/"
+                ;;
+            v8)  install_version v8 v8.3.3.23+5 de5056c12e1d91b054251b50a2326d5705ccd0c529b20b936ea1dc08d9d9458e99206de1fc52076af85df9352f1961c8ba9474c864f76bea59bce19b0595dd72
+                rm -rf "$OO_DIR/v8/web-apps/apps/documenteditor/main/resources/help"
+                rm -rf "$OO_DIR/v8/web-apps/apps/presentationeditor/main/resources/help"
+                rm -rf "$OO_DIR/v8/web-apps/apps/spreadsheeteditor/main/resources/help"
+                rm -rf "$OO_DIR/v8/web-apps/apps/common/main/resources/help/"
+                ;;
+            v9)  install_version v9 v9.2.0.119+5  1f1184fb04cf72a7eb2a49a9740074b5419486c79e1fd713e1f8c09b8594a826050ae941fed6ac6a96807ba73cc751d7c807bd7e6b73de9e4f8e74cd5ed04cfa ;;
+            x2t) install_x2t v7.3+1 ab0c05b0e4c81071acea83f0c6a8e75f5870c360ec4abc4af09105dd9b52264af9711ec0b7020e87095193ac9b6e20305e446f2321a541f743626a598e5318c1 ;;
+            *)
+                echo "Unknown version: $version"
+                exit 1
+                ;;
+        esac
+    done
 
     rm -rf "$BUILDS_DIR"
 
@@ -156,23 +227,22 @@ EOF
 }
 
 ensure_oo_is_downloaded() {
-  ensure_command_available git
+    ensure_command_available git
 
-	if ! [ -d "$BUILDS_DIR" ]; then
-		echo "Downloading OnlyOffice..."
-		git clone --bare https://github.com/cryptpad/onlyoffice-builds.git "$BUILDS_DIR"
-	fi
-  if [ ${TRUST_REPOSITORY+x} ] || [ "${PROPS[trust_repository]:-no}" == yes ]; then
-    git config --global --add safe.directory /cryptpad/onlyoffice-conf/onlyoffice-builds.git
-  fi
+    if ! [ -d "$BUILDS_DIR" ]; then
+        echo "Downloading OnlyOffice..."
+        git clone --bare https://github.com/cryptpad/onlyoffice-builds.git "$BUILDS_DIR"
+    fi
+    if [ ${TRUST_REPOSITORY+x} ] || [ "${PROPS[trust_repository]:-no}" == yes ]; then
+        git config --global --add safe.directory /cryptpad/onlyoffice-conf/onlyoffice-builds.git
+    fi
 }
 
-install_version() {
+install_old_version() {
     local DIR=$1
     local COMMIT=$2
     local FULL_DIR=$OO_DIR/$DIR
-    local LAST_DIR
-    LAST_DIR=$(pwd)
+    local LAST_DIR=$(pwd)
 
     local ACTUAL_COMMIT="not installed"
     if [ -e "$FULL_DIR"/.commit ]; then
@@ -206,6 +276,50 @@ install_version() {
     fi
 }
 
+install_version() {
+    local DIR=$1
+    local VERSION=$2
+    local HASH=$3
+    local FULL_DIR=$OO_DIR/$DIR
+    local LAST_DIR=$(pwd)
+
+    local ACTUAL_VERSION="not installed"
+    if [ -e "$FULL_DIR"/.version ]; then
+        ACTUAL_VERSION="$(cat "$FULL_DIR"/.version)"
+    fi
+
+    if [ "$ACTUAL_VERSION" != "$VERSION" ]; then
+        if [ ${CHECK+x} ]; then
+            echo "Wrong version in $FULL_DIR. Expected: $VERSION. Found: $ACTUAL_VERSION"
+            exit 1
+        fi
+
+        ensure_command_available sha512sum
+        ensure_command_available curl
+        ensure_command_available unzip
+
+        rm -rf "$FULL_DIR"
+        mkdir -p "$FULL_DIR"
+
+        cd "$FULL_DIR"
+
+        curl "https://github.com/cryptpad/onlyoffice-editor/releases/download/$VERSION/onlyoffice-editor.zip" --location --output "onlyoffice-editor.zip"
+        echo "$HASH onlyoffice-editor.zip" >onlyoffice-editor.zip.sha512
+        if ! sha512sum -c onlyoffice-editor.zip.sha512; then
+            echo "onlyoffice-editor.zip does not match expected checksum"
+            exit 1
+        fi
+        unzip onlyoffice-editor.zip
+        rm onlyoffice-editor.zip*
+
+        echo "$VERSION" >"$FULL_DIR"/.version
+
+        echo "$DIR updated"
+    else
+        echo "$DIR was up to date"
+    fi
+}
+
 install_x2t() {
     local VERSION=$1
     local HASH=$2
@@ -233,9 +347,8 @@ install_x2t() {
         ensure_command_available sha512sum
         ensure_command_available unzip
         curl "https://github.com/cryptpad/onlyoffice-x2t-wasm/releases/download/$VERSION/x2t.zip" --location --output x2t.zip
-        # curl "https://github.com/cryptpad/onlyoffice-x2t-wasm/releases/download/v7.3%2B1/x2t.zip" --location --output x2t.zip
         echo "$HASH x2t.zip" >x2t.zip.sha512
-        if ! sha512sum --check x2t.zip.sha512; then
+        if ! sha512sum -c x2t.zip.sha512; then
             echo "x2t.zip does not match expected checksum"
             exit 1
         fi

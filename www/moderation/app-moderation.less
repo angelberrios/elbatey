@@ -22,6 +22,22 @@
     label{
         margin-top:0.5rem;
     }
+    .cp-spinner, .cp-ok {
+        margin-left: @variables_icon_margin;
+    }
+    .cp-spinner {
+        svg {
+            animation: spin 10s linear infinite;
+        }
+    }
+    .cp-spinner, .cp-ok {
+        svg {
+            vertical-align: middle;
+        }
+    }
+    .cp-checkmark {
+        height: 1.5rem;
+    }
 
     display: flex;
     flex-flow: column;
@@ -38,6 +54,9 @@
         .cp-support-column {
             min-width: 700px;
             flex: 1 0 50%;
+            &:not(:has(.cp-support-list-ticket)) {
+                display: none;
+            }
             h1 {
                 display: flex;
                 align-items: center;
@@ -62,6 +81,9 @@
             height: 5rem;
             min-width: 5rem;
             flex: 1;
+            &:focus-visible {
+                outline: @variables_focus_style;
+            }
         }
         .cp-moderation-userdata-inputs {
             display: flex;
@@ -71,6 +93,9 @@
             width: 25rem;
             :first-child {
                 margin-top: 0 !important;
+            }
+            input:focus-visible{
+                outline: @variables_focus_style;
             }
         }
     }
@@ -132,6 +157,9 @@
         display: flex;
         flex-flow: column;
 
+        svg {
+            margin: 0;
+        }
     }
 }
 

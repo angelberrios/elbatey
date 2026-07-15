@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-(() => {
 const factory = (Messaging, Hash, Util, Crypto, Block) => {
 
     // Random timeout between 10 and 30 times your sync time (lag + chainpad sync)
@@ -222,14 +221,30 @@ const factory = (Messaging, Hash, Util, Crypto, Block) => {
         var curve = msg.author;
         var friend = ctx.store.proxy.friends && ctx.store.proxy.friends[curve];
         if (!friend || typeof msg.content !== "object") { return void cb(true); }
-        Object.keys(msg.content).forEach(function (key) {
-            friend[key] = msg.content[key];
-        });
-        if (ctx.store.messenger) {
-            ctx.store.messenger.onFriendUpdate(curve);
+        const edPublic = msg.content.edPublic;
+
+        const todo = () => {
+            Object.keys(msg.content).forEach(function (key) {
+                friend[key] = msg.content[key];
+            });
+            if (ctx.store.messenger) {
+                ctx.store.messenger.onFriendUpdate(curve);
+            }
+            ctx.updateMetadata();
+            cb(true);
+        };
+
+        if (msg.content.badge && ctx.store.modules['badge']) {
+            return ctx.store.modules['badge'].listBadges({
+                edPublic
+            }, (list => {
+                if (!list.includes(msg.content.badge)) {
+                    delete msg.content['badge'];
+                }
+                todo();
+            }));
         }
-        ctx.updateMetadata();
-        cb(true);
+        todo();
     };
 
     // Encrypt the password under the right key before sending it via URL hash
@@ -834,12 +849,30 @@ const factory = (Messaging, Hash, Util, Crypto, Block) => {
         if (!teamId) { return void cb(false); }
 
         var team = ctx.store.proxy.teams[teamId];
+        if (!team) { return void cb(false); }
+
         content.teamName = team.metadata && team.metadata.name;
         cb(false);
     };
     removeHandlers['SF_DELETED'] = function (ctx, box, data) {
         var id = data.content.sfId;
         delete sfDeleted[id];
+    };
+
+    var msgNotif = {};
+    handlers['SEND_CHAT_MESSAGE'] = function (ctx, box, data, cb) {
+
+        var msgSender = data.msg.author;
+
+        //Check if sender is in contacts and not muted
+        if (msgNotif[msgSender] || isMuted(ctx, data) || !ctx.store.proxy.friends[msgSender]) { return void cb(true); }
+        msgNotif[msgSender] = 1;
+
+        cb(false);
+    };
+    removeHandlers['SEND_CHAT_MESSAGE'] = function (ctx, box, data) {
+        var msgSender = data.author;
+        delete msgNotif[msgSender];
     };
 
     // New support
@@ -853,6 +886,7 @@ const factory = (Messaging, Hash, Util, Crypto, Block) => {
         // Admin to user
         if (content.isAdmin) {
             support.addUserTicket(content, cb);
+            return;
         }
 
         // User to admin
@@ -983,24 +1017,10 @@ const factory = (Messaging, Hash, Util, Crypto, Block) => {
     };
 };
 
-if (typeof(module) !== 'undefined' && module.exports) {
-    module.exports = factory(
-        require('../../common/common-messaging'),
-        require('../../common/common-hash'),
-        require('../../common/common-util'),
-        require('chainpad-crypto'),
-        require('../../common/login-block')
-    );
-} else if ((typeof(define) !== 'undefined' && define !== null) && (define.amd !== null)) {
-    define([
-        '/common/common-messaging.js',
-        '/common/common-hash.js',
-        '/common/common-util.js',
-        '/components/chainpad-crypto/crypto.js',
-        '/common/outer/login-block.js',
-    ], factory);
-} else {
-    // unsupported initialization
-}
-
-})();
+module.exports = factory(
+    require('./messaging'),
+    require('../../common/common-hash'),
+    require('../../common/common-util'),
+    require('chainpad-crypto'),
+    require('../../common/outer/login-block')
+);

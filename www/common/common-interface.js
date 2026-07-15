@@ -22,6 +22,8 @@ define([
     '/lib/tippy/tippy.min.js',
     '/common/hyperscript.js',
     '/customize/loading.js',
+    '/common/common-icons.js',
+    '/common/clipboard.js',
     //'/common/test.js',
 
     '/lib/jquery-ui/jquery-ui.min.js', // autocomplete widget
@@ -29,7 +31,7 @@ define([
     'css!/lib/tippy/tippy.css',
     'css!/lib/jquery-ui/jquery-ui.min.css'
 ], function ($, Messages, Util, Hash, Notifier, AppConfig,
-            Alertify, Tippy, h, Loading/*, Test */) {
+            Alertify, Tippy, h, Loading, Icons, Clipboard /*, Test */) {
     var UI = {};
 
     /*
@@ -212,6 +214,12 @@ define([
                 h('div'+cls, content),
             ])
         ]);
+
+        var dialogContent = frame.querySelector('div' + cls);
+        dialogContent.setAttribute('aria-live', 'assertive');
+        dialogContent.setAttribute('role', 'alertdialog');
+        dialogContent.setAttribute('aria-modal', 'true');
+
         var $frame = $(frame);
         frame.closeModal = function (cb) {
             frame.closeModal = function () {}; // Prevent further calls
@@ -242,7 +250,7 @@ define([
             var title = h('span.alertify-tabs-title'+ (tab.disabled ? '.disabled' : ''), h('span.tab-title-text',{id: 'cp-tab-' + tab.title.toLowerCase(), 'aria-hidden':"true"}, tab.title));
             $(title).attr('tabindex', '0');
             if (tab.icon) {
-                var icon = h('i', {class: tab.icon, 'aria-labelledby': 'cp-tab-' + tab.title.toLowerCase()});
+                var icon = Icons.get(tab.icon, {'aria-labelledby': 'cp-tab-' + tab.title.toLowerCase()});
                 $(title).prepend(' ').prepend(icon);
             }
 
@@ -275,7 +283,7 @@ define([
         ]);
     };
 
-    UI.tokenField = function (target, autocomplete) {
+    UI.tokenField = function (target, autocomplete, close = null) {
         var t = {
             element: target || h('input'),
         };
@@ -307,7 +315,7 @@ define([
         $input.attr('tabindex', 0);
 
         var $button = $(h('button.btn.btn-primary', [
-            h('i.fa.fa-plus'),
+            Icons.get('add'),
             h('span', Messages.tag_add)
         ]));
 
@@ -332,7 +340,7 @@ define([
                 if (!$tokens.length) {
                     $container.prepend(h('span.tokenfield-empty', Messages.kanban_noTags));
                 }
-                $tokens.find('.close').attr('tabindex', 0).on('keydown', e => {
+                $tokens.find('.close').attr('tabindex', 0).empty().append(Icons.get('delete-token')).on('keydown', e => {
                     e.stopPropagation();
                 });
                 $tokens.find('.token-label').attr('tabindex', 0).on('keydown', function (e) {
@@ -343,6 +351,9 @@ define([
                 });
                 $form.append($input);
                 $form.append($button);
+                if (close) {
+                    $form.append(close);
+                }
                 if (isEdit) { $button.find('span').text(Messages.tag_edit); }
                 else { $button.find('span').text(Messages.add); }
                 $container.append($form);
@@ -514,7 +525,7 @@ define([
         buttons.forEach(function (b) {
             if (!b.name || !b.onClick) { return; }
             var button = h('button', { 'class': b.className || '' }, [
-                b.iconClass ? h('i' + b.iconClass) : undefined,
+                b.iconClass ? Icons.get(b.iconClass): undefined,
                 b.name
             ]);
             button.classList.add('btn');
@@ -578,6 +589,7 @@ define([
     };
 
     let addTabListener = UI.addTabListener = frame => {
+        $(frame).attr('role', 'dialog').attr('aria-modal', 'true');
         // find focusable elements
         let modalElements = $(frame).find('a, button, input, [tabindex]:not([tabindex="-1"]), textarea').filter(':visible').filter(':not(:disabled)');
 
@@ -628,7 +640,6 @@ define([
         });
 
         addTabListener(frame);
-
         return frame;
     };
 
@@ -654,9 +665,12 @@ define([
         };
         $blockContainer.html('').appendTo($body);
         var $block = $(h('div.cp-modal')).appendTo($blockContainer);
-        $(h('span.cp-modal-close.fa.fa-times', {
-            title: Messages.filePicker_close
-        })).click(hide).appendTo($block);
+        $(h('span',[
+            Icons.get('close', {
+                'class': 'cp-modal-close',
+                'title': Messages.filePicker_close
+            }),
+        ])).click(hide).appendTo($block);
         $body.click(hide);
         $block.click(function (e) {
             e.stopPropagation();
@@ -666,6 +680,7 @@ define([
                 hide();
             }
         });
+
         return {
             $modal: $blockContainer,
             show: function () {
@@ -727,6 +742,36 @@ define([
         };
     };
 
+    UI.alertPromise = function (msg, opt) {
+        return new Promise((resolve) => {
+            UI.alert(msg, resolve, opt);
+        });
+    };
+
+    /**
+     * @callback promptCallback
+     * @param {string} value - the value the user chose
+     */
+
+    /**
+     * Optional parameters for UI.prompt()
+     * @typedef {Object} PromptParams
+     * @property {boolean} [password] - if true: ask the user for a password
+     * @property {Element} [typeInput] - if set: add a dropdown next to the text input field (create it with UIElements.createDropdown())
+     * @property {Object} [inputOpts] - parameters for dialog.textInput()
+     * @property {string} [ok] - caption for the OK button
+     * @property {string} [cancel] - caption for the cancel button
+     */
+
+    /**
+     * Show a popup to ask something.
+     *
+     * @param {(string|Element)} [msg] - Message/title to show
+     * @param {string} [def] - the default value
+     * @param {promptCallback} [cb] - called when the used selected a value
+     * @param {PromptParams} [opt] - optional settings for the prompt
+     * @param {boolean} [force] - if true: do not HTML escape msg
+     */
     UI.prompt = function (msg, def, cb, opt, force) {
         cb = cb || function () {};
         opt = opt || {};
@@ -811,7 +856,6 @@ define([
         document.body.appendChild(frame);
 
         addTabListener(frame);
-
         listener = listenForKeys(function () {
             // Only trigger OK if cancel is not focused
             if (document.activeElement === $cancel[0]) {
@@ -959,9 +1003,16 @@ define([
         }, opts);
 
         var input = h('input.cp-password-input', attributes);
-        var eye = h('span.fa.fa-eye.cp-password-reveal', {
-            tabindex: 0
-        });
+        let passwordReveal = Icons.get('password-reveal');
+        let passwordHide = Icons.get('password-hide');
+        var eye = h('span.cp-password-reveal', {
+            tabindex: 0,
+            role: 'button',
+            'aria-label': Messages.show_password,
+            'aria-pressed': 'false'
+        },[
+            passwordReveal
+        ]);
 
         var $eye = $(eye);
         var $input = $(input);
@@ -980,15 +1031,15 @@ define([
         } else {
             Util.onClickEnter($eye, function (e) {
                 e.stopPropagation();
-                if ($eye.hasClass('fa-eye')) {
-                    $input.prop('type', 'text');
-                    $input.focus();
-                    $eye.removeClass('fa-eye').addClass('fa-eye-slash');
-                    return;
+                if ($input.prop('type') === 'password') {
+                    $input.prop('type', 'text').focus();
+                    $eye.empty().append(passwordHide);
+                    $eye.attr('aria-label', Messages.hide_password).attr('aria-pressed', 'true');
+                } else {
+                    $input.prop('type', 'password').focus();
+                    $eye.empty().append(passwordReveal);
+                    $eye.attr('aria-label', Messages.show_password).attr('aria-pressed', 'false');
                 }
-                $input.prop('type', 'password');
-                $input.focus();
-                $eye.removeClass('fa-eye-slash').addClass('fa-eye');
             });
         }
 
@@ -999,41 +1050,16 @@ define([
     };
 
     UI.createHelper = function (href, text) {
-        var q = h('a.fa.fa-question-circle', {
+        var q = h('a', {
             'data-cptippy-html': true,
             style: 'text-decoration: none !important;',
             title: text,
             href: href,
             target: "_blank",
             'data-tippy-placement': "right",
-            'aria-label': Messages.help_genericMore //TBC XXX
-        });
+            'aria-label': text
+        }, Icons.get('circle-question'));
         return q;
-    };
-
-    /*
-     *  spinner
-     */
-    UI.spinner = function (parent) {
-        var $target = $('<span>', {
-            'class': 'fa fa-circle-o-notch fa-spin fa-4x fa-fw',
-        }).hide();
-
-        $(parent).append($target);
-
-        return {
-            show: function () {
-                $target.css('display', 'inline');
-                return this;
-            },
-            hide: function () {
-                $target.hide();
-                return this;
-            },
-            get: function () {
-                return $target;
-            },
-        };
     };
 
     var LOADING = 'cp-loading';
@@ -1045,8 +1071,10 @@ define([
             var $loading = $('#' + LOADING);
             // Show the loading screen
             $loading.css('display', '');
+            $loading.toggleClass('cp-loading-empty', false);
             $loading.removeClass('cp-loading-hidden');
             $loading.removeClass('cp-loading-transparent');
+            $loading.attr('aria-live','polite');
             if (config.newProgress) {
                 var progress = h('div.cp-loading-progress', [
                     h('p.cp-loading-progress-list'),
@@ -1059,10 +1087,12 @@ define([
                 $('.cp-loading-spinner-container').show();
             }
             // Add loading text
+            const $message = $('#' + LOADING).find('#cp-loading-message');
+            const $spinnerMessage = $('#' + LOADING).find('#cp-loading-spinner-message').hide();
+            $message.removeClass('cp-error-message cp-error-message-alt');
+            $message.hide().text('');
             if (loadingText) {
-                $('#' + LOADING).find('#cp-loading-message').show().text(loadingText);
-            } else {
-                $('#' + LOADING).find('#cp-loading-message').hide().text('');
+                $spinnerMessage.show().text(loadingText);
             }
         };
         if ($('#' + LOADING).length) {
@@ -1094,16 +1124,22 @@ define([
         $('head > link[href^="/customize/src/pre-loading.css"]').remove();
         $('html').toggleClass('cp-loading-noscroll', false);
     };
-    UI.errorLoadingScreen = function (error, transparent, exitable) {
+    UI.emptyLoadingScreen = function (content) {
+        UI.addLoadingScreen();
+        var $loading = $('#' + LOADING);
+        $loading.toggleClass('cp-loading-empty', true);
+        $loading.find('.cp-loading-container').hide();
+        $loading.find('.cp-loading-logo').hide();
+        $loading.append(h('div.cp-loading-empty', [content]));
+    };
+    UI.errorLoadingScreen = function (error, transparent, exitable, errorCls) {
         if (error === 'Error: XDR encoding failure') {
             console.warn(error);
             return;
         }
 
         var $loading = $('#' + LOADING);
-        if (!$loading.is(':visible') || $loading.hasClass('cp-loading-hidden')) {
-            UI.addLoadingScreen();
-        }
+        UI.addLoadingScreen();
         // Remove the progress list
         $loading.find('.cp-loading-progress').remove();
         // Hide the spinner
@@ -1116,7 +1152,14 @@ define([
         if (error instanceof Element) {
             $error.html('').append(error);
         } else {
+            errorCls = true;
             $error.html(error || Messages.error);
+        }
+
+        if (errorCls) {
+            const cls = transparent ? 'cp-error-message-alt'
+                                    : 'cp-error-message';
+            $error.addClass(cls);
         }
         $error.find('a[href]').click(function (e) {
             e.preventDefault();
@@ -1126,7 +1169,6 @@ define([
                 window.open('/bounce/#'+encodeURIComponent(href));
                 return;
             }
-            // XXX
             window.parent.location = href;
         });
         if (exitable) {
@@ -1147,35 +1189,32 @@ define([
     };
 
     UI.getNewIcon = function (type) {
-        var icon = h('i.fa.fa-file-text-o');
+        var icon = Icons.get('file');
 
         if (AppConfig.applicationsIcon && AppConfig.applicationsIcon[type]) {
             icon = AppConfig.applicationsIcon[type];
-            var font = icon.indexOf('cptools') === 0 ? 'cptools' : 'fa';
             if (type === 'fileupload') { type = 'file'; }
             if (type === 'folderupload') { type = 'file'; }
             if (type === 'link') { type = 'drive'; }
             var appClass = ' cp-icon cp-icon-color-'+type;
-            icon = h('i', {'class': font + ' ' + icon + appClass});
+            icon = Icons.get(icon, {'class': appClass});
         }
 
         return icon;
     };
-    var $defaultIcon = $('<span>', {"class": "fa fa-file-text-o"});
     UI.getIcon = function (type) {
-        var $icon = $defaultIcon.clone();
+        let icon = Icons.get('file');
 
         if (AppConfig.applicationsIcon && AppConfig.applicationsIcon[type]) {
-            var icon = AppConfig.applicationsIcon[type];
-            var font = icon.indexOf('cptools') === 0 ? 'cptools' : 'fa';
+            let appIcon = AppConfig.applicationsIcon[type];
             if (type === 'fileupload') { type = 'file'; }
             if (type === 'folderupload') { type = 'file'; }
             if (type === 'link') { type = 'drive'; }
-            var appClass = ' cp-icon cp-icon-color-'+type;
-            $icon = $('<span>', {'class': font + ' ' + icon + appClass});
+            const appClass = ' cp-icon cp-icon-color-'+type;
+            icon = Icons.get(appIcon, {'class': appClass});
         }
 
-        return $icon;
+        return icon;
     };
     UI.getFileIcon = function (data) {
         var $icon = UI.getIcon();
@@ -1223,6 +1262,10 @@ define([
         arrow: true,
         maxWidth: '200px',
         flip: true,
+        onShow: () => {
+            // Hide other tooltips
+            $('body').find('.tippy-popper').hide();
+        },
         popperOptions: {
             modifiers: {
                 preventOverflow: { boundariesElement: 'window' }
@@ -1323,13 +1366,12 @@ define([
         });
 
         $input.change(function () {
+            $mark.attr('aria-checked', $input.is(':checked'));
             if (!opts.labelAlt) { return; }
             if ($input.is(':checked') !== checked) {
                 $(label).text(opts.labelAlt);
-                $mark.attr('aria-checked', 'true');
             } else {
                 $(label).text(labelTxt);
-                $mark.attr('aria-checked', 'false');
             }
         });
 
@@ -1352,18 +1394,26 @@ define([
         $.extend(inputOpts, opts.input || {});
 
         // Label properties
-        var labelOpts = {};
+        var labelOpts = {
+            for: id
+        };
         $.extend(labelOpts, opts.label || {});
         if (labelOpts.class) { labelOpts.class += ' cp-checkmark'; }
 
+        var labelId = id + '-label';
         // Mark properties
-        var markOpts = { tabindex: 0 };
+        var markOpts = {
+            tabindex: 0,
+            role: 'radio',
+            'aria-checked': checked ? 'true' : 'false',
+            'aria-labelledby': labelId
+        };
         $.extend(markOpts, opts.mark || {});
 
         var input = h('input', inputOpts);
         var $input = $(input);
         var mark = h('span.cp-radio-mark', markOpts);
-        var label = h('span.cp-checkmark-label', labelTxt);
+        var label = h('span.cp-checkmark-label', {id: labelId}, labelTxt);
 
         $(mark).keydown(function (e) {
             if ($input.is(':disabled')) { return; }
@@ -1376,7 +1426,14 @@ define([
             }
         });
 
-        $input.change(function () { $(mark).focus(); });
+        $input.change(function () {
+            $(mark).attr('aria-checked', $input.is(':checked') ? 'true' : 'false');
+            $('input[name="' + name + '"]').not($input).each(function() {
+                var otherRadio = $(this).closest('.cp-radio').find('.cp-radio-mark');
+                otherRadio.attr('aria-checked', false);
+            });
+            $(mark).focus();
+        });
 
         var radio =  h('label', labelOpts, [
             input,
@@ -1397,7 +1454,7 @@ define([
         opts = opts || {};
 
         var dontShowAgain = h('div.cp-corner-dontshow', [
-            h('span.fa.fa-times'),
+            Icons.get('close'),
             Messages.dontShowAgain
         ]);
 
@@ -1465,10 +1522,9 @@ define([
             delete: deletePopup
         };
     };
-
     UI.makeSpinner = function ($container) {
-        var $ok = $('<span>', {'class': 'fa fa-check', title: Messages.saved}).hide();
-        var $spinner = $('<span>', {'class': 'fa fa-spinner fa-pulse'}).hide();
+        var $okWrap = $('<span>', {class: "cp-ok"}).hide().append(Icons.get('check', { title: Messages.saved }));
+        var $spinWrap = $('<span>', {class: "cp-spinner"}).hide().append(Icons.get('loading'));
 
         var state = false;
         var to;
@@ -1476,34 +1532,34 @@ define([
         var spin = function () {
             clearTimeout(to);
             state = true;
-            $ok.hide();
-            $spinner.show();
+            $okWrap.hide();
+            $spinWrap.show();
         };
         var hide = function () {
             clearTimeout(to);
             state = false;
-            $ok.hide();
-            $spinner.hide();
+            $okWrap.hide();
+            $spinWrap.hide();
         };
         var done = function () {
             clearTimeout(to);
             state = false;
-            $ok.show();
-            $spinner.hide();
+            $okWrap.show();
+            $spinWrap.hide();
             to = setTimeout(function () {
-                $ok.hide();
+                $okWrap.hide();
             }, 500);
         };
 
         if ($container && $container.append) {
-            $container.append($ok);
-            $container.append($spinner);
+            $container.append($okWrap);
+            $container.append($spinWrap);
         }
 
         return {
             getState: function () { return state; },
-            ok: $ok[0],
-            spinner: $spinner[0],
+            ok: $okWrap[0],
+            spinner: $spinWrap[0],
             spin: spin,
             hide: hide,
             done: done
@@ -1568,6 +1624,22 @@ define([
             hide: hide,
             remove: remove
         };
+    };
+
+    UI.getPreCopy = (content) => {
+        let copy = h('div.cp-pre-copy-button', [
+            Icons.get('copy')
+        ]);
+        Util.onClickEnter($(copy), () => {
+            Clipboard.copy(content, (err) => {
+                if (err) { return UI.warn(Messages.error); }
+                UI.log(Messages.genericCopySuccess);
+            });
+        });
+        return h('div.cp-pre-copy-container', [
+            copy,
+            h('pre.cp-pre-copy', content)
+        ]);
     };
 
 /*  QR code generation is synchronous once the library is loaded
@@ -1659,7 +1731,7 @@ define([
         var input = split[1]; // User/admin manual input
         var text = UI.getDestroyedPlaceholderMessage(code, isAccount);
         var reasonBlock = input ? h('p', Messages._getKey('dph_reason', [input])) : undefined;
-        return h('div', [
+        return h('div.cp-loading-error', [
             h('p', text),
             reasonBlock
         ]);

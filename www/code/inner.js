@@ -88,7 +88,7 @@ define([
             text: Messages.toolbar_theme,
             options: [],
             common: framework._.sfCommon,
-            iconCls: 'cptools cptools-palette'
+            iconCls: 'color-palette'
         });
         framework._.toolbar.$theme = $drawer.find('ul.cp-dropdown-content');
         framework._.toolbar.$bottomL.append($drawer);
@@ -99,7 +99,7 @@ define([
         var $showAuthorColorsButton = framework._.sfCommon.createButton('', true, {
             text: Messages.cba_hide,
             name: 'authormarks',
-            icon: 'fa-paint-brush',
+            icon: 'customize',
         }).hide();
         var $showAuthorColors = UIElements.getEntryFromButton($showAuthorColorsButton).hide();
         $showAuthorColors.find('span').addClass('cp-toolbar-name cp-toolbar-drawer-element');
@@ -179,6 +179,9 @@ define([
 
 
     var isSmallScreen = () => window.innerWidth <= 600;
+    const showEditor = Util.once(() => {
+        $('#cp-app-code-editor').css('display', '');
+});
     var mkPreviewPane = function (editor, CodeMirror, framework, isPresentMode) {
         var $previewContainer = $('#cp-app-code-preview');
         var $preview = $('#cp-app-code-preview-content');
@@ -345,8 +348,8 @@ define([
             $codeMirrorContainer.addClass('cp-app-code-fullpage');
         };
 
-
         framework.onReady(function () {
+            showEditor();
             handleResize();
             window.addEventListener('resize', handleResize);
 
@@ -418,7 +421,7 @@ define([
     var mkColorByAuthor = function (framework, markers) {
         var common = framework._.sfCommon;
         var $cbaButton = framework._.sfCommon.createButton(null, true, {
-            icon: 'fa-paint-brush',
+            icon: 'customize',
             text: Messages.cba_title,
             name: 'cba'
         }, function () {
@@ -536,6 +539,7 @@ define([
         }
 
         framework.onContentUpdate(function (newContent) {
+            showEditor();
             var highlightMode = newContent.highlightMode;
             if (highlightMode && highlightMode !== CodeMirror.highlightMode) {
                 CodeMirror.setMode(highlightMode, evModeChange.fire);
@@ -578,6 +582,13 @@ define([
         framework.setCursorGetter(CodeMirror.getCursor);
         editor.on('cursorActivity', updateCursor);
 
+        editor.setOption("extraKeys", {
+            "Esc": function(cm, event) {
+                event.preventDefault();
+                document.body.focus();
+            }
+        });
+        
         framework.onEditableChange(function () {
             editor.setOption('readOnly', framework.isLocked() || framework.isReadOnly());
         });
@@ -696,7 +707,7 @@ define([
                     h('div#cp-app-code-preview-content'),
                     h('div#cp-app-code-print')
                 ])
-            ]);
+            ]).hide();
 
             nThen(function (waitFor) {
                 $(waitFor());

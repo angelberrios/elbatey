@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-(() => {
-const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
+const factory = (Util, Hash, Realtime, Pinpad, Crypt,
             nThen, Crypto, Listmap, ChainPad, CpNetflux) => {
-    var Support = {};
+    const Support = {};
+    let ApiConfig = {};
 
     Support.setCustomize = data => {
         ApiConfig = data.ApiConfig;
@@ -182,7 +182,7 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
                 curvePublic: supportKey // Old tickets still use previous keys
             };
             ctx.Store.onSync(null, waitFor());
-        }).nThen(() => {
+        }).nThen((waitFor) => {
             var notifChannel = isAdmin ? data.notifications
                                     : Hash.getChannelIdFromKey(supportKey);
             // First message to deal with the new ticket (store it in the list)
@@ -199,12 +199,18 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
             }, {
                 channel: notifChannel,
                 curvePublic: theirPublic
-            }, (obj) => {
+            }, waitFor((obj) => {
                 console.error(obj);
                 // Don't store the ticket in case of error
-                if (obj && obj.error) { delete ctx.supportData[channel]; }
+                if (obj && obj.error) {
+                    waitFor.abort();
+                    delete ctx.supportData[channel];
+                }
                 cb(obj);
-            });
+            }));
+        }).nThen(() => {
+            var notifChannel = isAdmin ? data.notifications
+                                    : Hash.getChannelIdFromKey(supportKey);
             // Second message is only a notification to warn the user/admins
             mailbox.sendTo('NOTIF_TICKET', {
                 title: title,
@@ -302,9 +308,9 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
         if (!curvePrivate) { return void cb('EFORBIDDEN'); }
         let edPrivate, edPublic;
         try {
-            let pair = Nacl.sign.keyPair.fromSeed(Nacl.util.decodeBase64(curvePrivate));
-            edPrivate = Nacl.util.encodeBase64(pair.secretKey);
-            edPublic = Nacl.util.encodeBase64(pair.publicKey);
+            let pair = Nacl.sign.keyPair.fromSeed(Util.decodeBase64(curvePrivate));
+            edPrivate = Util.encodeBase64(pair.secretKey);
+            edPublic = Util.encodeBase64(pair.publicKey);
         } catch (e) {
             return void cb(e);
         }
@@ -525,7 +531,9 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
                     entry.time = last.time;
                     entry.premium = premium;
                     if (last.sender) {
-                        entry.lastAdmin = !last.sender.blockLocation;
+                        const ed = last.sender.edPublic;
+                        entry.lastAdmin = ed ? ctx.moderatorKeys.includes(ed)
+                                             : !last.sender.blockLocation;
                     }
                     if (last.close) {
                         doc.tickets.closed[data.channel] = entry;
@@ -854,17 +862,21 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
 
     // Mailbox events
 
+    const onTicketAdded = {};
     var addAdminTicket = function (ctx, data, cb) {
         // Wait for the chainpad to be ready before adding the data
         if (!ctx.adminRdyEvt) { return void cb(true); }
 
         ctx.adminRdyEvt.reg(() => {
             let supportKey;
+            onTicketAdded[data.channel] = Util.mkEvent(true);
             nThen((waitFor) => {
                 // Send ticket to the admins and call back
                 getKeys(ctx, true, data, waitFor((err, obj) => {
                     if (err) {
                         waitFor.abort();
+                        onTicketAdded[data.channel].fire(err);
+                        delete onTicketAdded[data.channel];
                         return void cb(true);
                     }
                     supportKey = obj.supportKey;
@@ -876,7 +888,10 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
                     var doc = ctx.adminDoc.proxy;
                     if (doc.tickets.active[data.channel] || doc.tickets.closed[data.channel]
                         || doc.tickets.pending[data.channel]) {
-                        return void cb(true); }
+                        onTicketAdded[data.channel].fire();
+                        delete onTicketAdded[data.channel];
+                        return void cb(true);
+                    }
                     doc.tickets.active[data.channel] = {
                         title: data.title,
                         premium: data.premium,
@@ -888,6 +903,8 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
                     Realtime.whenRealtimeSyncs(ctx.adminDoc.realtime, function () {
                         // Call back only when synced. That way we can handle the mailbox message
                         // later in case of network issues.
+                        onTicketAdded[data.channel].fire();
+                        delete onTicketAdded[data.channel];
                         cb(true);
                     });
                     notifyClient(ctx, true, 'NEW_TICKET', data.channel);
@@ -923,10 +940,18 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
     var checkAdminTicket = function (ctx, data, cb) {
         if (!ctx.adminRdyEvt) { return void cb(true); }
 
+        // Tickets may take up to 2s to be added to chainpad
+        // (random timeout to avoid duplicate add)
         ctx.adminRdyEvt.reg(() => {
             let doc = ctx.adminDoc.proxy;
             let exists = doc.tickets.active[data.channel] || doc.tickets.pending[data.channel];
-            cb(exists);
+            if (exists) { return cb(exists); }
+            if (onTicketAdded[data.channel]) {
+                onTicketAdded[data.channel].reg((err) => {
+                    if (err) { return cb(false); }
+                    cb(true);
+                });
+            }
         });
     };
 
@@ -999,8 +1024,8 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
     let updateServerKey = (ctx, curvePublic, curvePrivate, cb) => {
         let edPublic;
         try {
-            let pair = Nacl.sign.keyPair.fromSeed(Nacl.util.decodeBase64(curvePrivate));
-            edPublic = Nacl.util.encodeBase64(pair.publicKey);
+            let pair = Nacl.sign.keyPair.fromSeed(Util.decodeBase64(curvePrivate));
+            edPublic = Util.encodeBase64(pair.publicKey);
         } catch (e) {
             return void cb(e);
         }
@@ -1022,8 +1047,8 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
         let edPublic = proxy.edPublic;
 
         const keyPair = Nacl.box.keyPair();
-        const newKeyPub = Nacl.util.encodeBase64(keyPair.publicKey);
-        const newKey = Nacl.util.encodeBase64(keyPair.secretKey);
+        const newKeyPub = Util.encodeBase64(keyPair.publicKey);
+        const newKey = Util.encodeBase64(keyPair.secretKey);
 
         const oldKey = Util.find(proxy, ['mailboxes', 'supportteam', 'keys', 'curvePrivate']);
         const oldKeyPub = Util.find(proxy, ['mailboxes', 'supportteam', 'keys', 'curvePublic']);
@@ -1420,37 +1445,15 @@ const factory = (ApiConfig = {}, Util, Hash, Realtime, Pinpad, Crypt,
     return Support;
 };
 
-if (typeof(module) !== 'undefined' && module.exports) {
-    // Code from customize can't be laoded directly in the build
-    module.exports = factory(
-        undefined,
-        require('../../common/common-util'),
-        require('../../common/common-hash'),
-        require('../../common/common-realtime'),
-        require('../../common/pinpad'),
-        require('../../common/cryptget'),
-        require('nthen'),
-        require('chainpad-crypto'),
-        require('chainpad-listmap'),
-        require('chainpad'),
-        require('chainpad-netflux')
-    );
-} else if ((typeof(define) !== 'undefined' && define !== null) && (define.amd !== null)) {
-    define([
-        '/api/config',
-        '/common/common-util.js',
-        '/common/common-hash.js',
-        '/common/common-realtime.js',
-        '/common/pinpad.js',
-        '/common/cryptget.js',
-        '/components/nthen/index.js',
-        '/components/chainpad-crypto/crypto.js',
-        'chainpad-listmap',
-        '/components/chainpad/chainpad.dist.js',
-        'chainpad-netflux'
-    ], factory);
-} else {
-    // unsupported initialization
-}
-
-})();
+module.exports = factory(
+    require('../../common/common-util'),
+    require('../../common/common-hash'),
+    require('../../common/common-realtime'),
+    require('../../common/pinpad'),
+    require('../../common/cryptget'),
+    require('nthen'),
+    require('chainpad-crypto'),
+    require('chainpad-listmap'),
+    require('chainpad'),
+    require('chainpad-netflux')
+);

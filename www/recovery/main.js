@@ -21,7 +21,6 @@ define([
 
     '/components/tweetnacl/nacl-fast.min.js',
 
-    'css!/components/components-font-awesome/css/font-awesome.min.css',
 ], function ($, Sortify, Login, Cryptpad, /*Test,*/ Cred, UI, Util, Realtime, Constants, Feedback,
     Clipboard, LocalStore, Block, ServerCommand) {
     if (window.top !== window) { return; }
@@ -65,8 +64,8 @@ define([
 
         $forgot.click(function () {
             $alt.toggle();
-            if ($alt.is(':visible')) { $forgot.find('i').attr('class', 'fa fa-caret-down'); }
-            else { $forgot.find('i').attr('class', 'fa fa-caret-right'); }
+            if ($alt.is(':visible')) { $forgot.find('i').attr('data-lucide', 'chevron-down'); }
+            else { $forgot.find('i').attr('data-lucide', 'chevron-right'); }
         });
 
         var proofStr;
@@ -76,10 +75,10 @@ define([
             var toSign = {
                 intent: 'Disable TOTP',
                 date: new Date().toISOString(),
-                blockId: Nacl.util.encodeBase64(pub),
+                blockId: Util.encodeBase64(pub),
             };
-            var proof = Nacl.sign.detached(Nacl.util.decodeUTF8(Sortify(toSign)), sec);
-            toSign.proof = Nacl.util.encodeBase64(proof);
+            var proof = Nacl.sign.detached(Util.decodeUTF8(Sortify(toSign)), sec);
+            toSign.proof = Util.encodeBase64(proof);
             proofStr = JSON.stringify(toSign, 0, 2);
             $mfaProof.html(proofStr);
         };

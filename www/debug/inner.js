@@ -14,15 +14,16 @@ define([
     '/common/common-hash.js',
     '/common/common-constants.js',
     '/common/hyperscript.js',
+    '/common/clipboard.js',
     '/api/config',
     '/common/common-realtime.js',
     '/customize/messages.js',
     '/customize/application_config.js',
     '/common/common-ui-elements.js',
     '/debug/chainpad.dist.js',
+    '/common/common-icons.js',
 
     'css!/components/bootstrap/dist/css/bootstrap.min.css',
-    'css!/components/components-font-awesome/css/font-awesome.min.css',
     'less!/debug/app-debug.less',
 ], function (
     $,
@@ -36,12 +37,14 @@ define([
     Hash,
     Constants,
     h,
+    Clipboard,
     ApiConfig,
     CommonRealtime,
     Messages,
     AppConfig,
     UIElements,
-    ChainWalk)
+    ChainWalk,
+    Icons)
 {
     var APP = window.APP = {
         $: $,
@@ -301,7 +304,7 @@ define([
             var content = h('div#cp-app-debug-loading', [
                 h('h2', 'Step 1/3'),
                 h('p', 'Loading history from the server...'),
-                h('span.fa.fa-circle-o-notch.fa-spin.fa-3x.fa-fw')
+                Icons.get('loading')
             ]);
             $('#cp-app-debug-content').html('').append(content);
 
@@ -316,7 +319,7 @@ define([
                     var content = h('div.cp-app-debug-progress.cp-loading-progress', [
                         h('h2', 'Step 2/3'),
                         h('p', 'Decrypting your history...'),
-                        h('span.fa.fa-circle-o-notch.fa-spin.fa-3x.fa-fw'),
+                        Icons.get('loading'),
                         h('br'),
                         decryptProgress
                     ]);
@@ -343,7 +346,7 @@ define([
                 var content = h('div#cp-app-debug-loading', [
                     h('h2', 'Step 3/3'),
                     h('p', 'Parsing history...'),// TODO
-                    h('span.fa.fa-circle-o-notch.fa-spin.fa-3x.fa-fw'),
+                    Icons.get('loading'),
                     h('br'),
                     parseProgress
                 ]);
@@ -397,7 +400,7 @@ define([
             // Set spinner
             var content = h('div#cp-app-debug-loading', [
                 h('p', 'Loading history from the server...'),
-                h('span.fa.fa-circle-o-notch.fa-spin.fa-3x.fa-fw')
+                Icons.get('loading'),
             ]);
             $('#cp-app-debug-content').html('').append(content);
             var makeChainpad = function () {
@@ -424,12 +427,12 @@ define([
                 var replay, input, left, right;
                 var content = h('div.cp-app-debug-progress.cp-loading-progress', [
                     h('p', [
-                        left = h('span.fa.fa-chevron-left'),
+                        left = Icons.get('chevron-left'),
                         h('label', 'Start'),
                         start = h('input', {type: 'number', value: 0}),
                         h('label', 'State'),
                         input = h('input', {type: 'number', min: 1}),
-                        right = h('span.fa.fa-chevron-right'),
+                        right = Icons.get('chevron-right'),
                     ]),
                     h('br'),
                     replay = h('pre.cp-debug-replay'),
@@ -707,15 +710,39 @@ define([
             toolbar.$drawer.append($histEntry);
 
             var $content = common.createButton(null, true, {
-                icon: 'fa-question',
+                icon: 'drive-recent',
                 title: 'Get debugging graph', // TODO
                 name: 'graph',
+                text: 'Replay',
                 id: 'cp-app-debug-get-content'
             });
             $content.click(getContent);
             var $contentEntry = UIElements.getEntryFromButton($content);
-            console.error($contentEntry);
             toolbar.$drawer.append($contentEntry);
+
+            var priv = metadataMgr.getPrivateData();
+            if (priv.debugDrive) {
+                var $drive = common.createButton(null, true, {
+                    icon: 'drive',
+                    title: 'Get Shared Folder content', // TODO
+                    text: 'SF channel list',
+                    id: 'cp-app-debug-get-channels'
+                });
+                $drive.click(() => {
+                    let p = JSON.parse(info.realtime.getUserDoc());
+                    const fd = p?.drive?.filesData || p?.filesData;
+                    let all = Object.keys(fd).map(id => {
+                        return fd[id]?.channel;
+                    });
+                    console.error(all);
+                    Clipboard.copy(all.join('\n'), (err) => {
+                        if (err) { return UI.warn(Messages.error); }
+                        UI.log(Messages.genericCopySuccess);
+                    });
+                });
+                var $driveEntry = UIElements.getEntryFromButton($drive);
+                toolbar.$drawer.append($driveEntry);
+            }
         };
 
         config.onReady = function (info) {

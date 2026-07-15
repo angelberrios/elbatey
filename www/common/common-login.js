@@ -6,12 +6,11 @@ define([
     'chainpad-listmap',
     '/components/chainpad-crypto/crypto.js',
     '/common/common-util.js',
-    '/common/outer/network-config.js',
+    '/common/network-config.js',
     '/common/common-credential.js',
     '/components/chainpad/chainpad.dist.js',
     '/common/common-realtime.js',
     '/common/common-constants.js',
-    '/common/common-interface.js',
     '/common/common-feedback.js',
     '/common/outer/local-store.js',
     '/customize/messages.js',
@@ -22,7 +21,7 @@ define([
 
     '/components/tweetnacl/nacl-fast.min.js',
     '/components/scrypt-async/scrypt-async.min.js', // better load speed
-], function (Listmap, Crypto, Util, NetConfig, Cred, ChainPad, Realtime, Constants, UI,
+], function (Listmap, Crypto, Util, NetConfig, Cred, ChainPad, Realtime, Constants,
             Feedback, LocalStore, Messages, nThen, Block, Hash, ServerCommand) {
     var Nacl = window.nacl;
 
@@ -43,8 +42,8 @@ define([
         var curveSeed = dispense(32);
 
         var curvePair = Nacl.box.keyPair.fromSecretKey(new Uint8Array(curveSeed));
-        opt.curvePrivate = Nacl.util.encodeBase64(curvePair.secretKey);
-        opt.curvePublic = Nacl.util.encodeBase64(curvePair.publicKey);
+        opt.curvePrivate = Util.encodeBase64(curvePair.secretKey);
+        opt.curvePublic = Util.encodeBase64(curvePair.publicKey);
 
         // 32 more for a signing key
         var edSeed = opt.edSeed = dispense(32);
@@ -56,8 +55,8 @@ define([
         // derive a private key from the ed seed
         var signingKeypair = Nacl.sign.keyPair.fromSeed(new Uint8Array(edSeed));
 
-        opt.edPrivate = Nacl.util.encodeBase64(signingKeypair.secretKey);
-        opt.edPublic = Nacl.util.encodeBase64(signingKeypair.publicKey);
+        opt.edPrivate = Util.encodeBase64(signingKeypair.secretKey);
+        opt.edPublic = Util.encodeBase64(signingKeypair.publicKey);
 
         var keys = opt.keys = Crypto.createEditCryptor(null, encryptionSeed);
 
@@ -124,7 +123,12 @@ define([
     var legacyLogin = function (opt, isRegister, cb, res) {
         res = res || {};
         loadUserObject(opt, function (err, rt) {
-            if (err) { return void cb(err); }
+            if (err) {
+                // If the channel is empty, it probably means the credentials
+                // are invalid
+                console.error(err);
+                return void cb('NO_SUCH_USER');
+            }
 
             // if a proxy is marked as deprecated, it is because someone had a non-owned drive
             // but changed their password, and couldn't delete their old data.
@@ -209,7 +213,6 @@ define([
             opt.channelHex = secret.channel;
         }
 
-        console.warn(opt);
         return opt;
     };
 
@@ -317,6 +320,13 @@ define([
                 res.opt = allocateBytes(bytes);
                 res.blockHash = res.opt.blockHash;
                 blockKeys = res.opt.blockKeys;
+                if (window.location.hash === '#debug') {
+                    alert(JSON.stringify({
+                        blockId: Util.encodeBase64(blockKeys.sign.publicKey)
+                    }, 0, 2));
+                    waitFor.abort();
+                    return;
+                }
                 if (ssoAuth && ssoAuth.name) { uname = res.uname = ssoAuth.name; }
             }));
         }).nThen(function (waitFor) {

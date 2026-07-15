@@ -7,7 +7,7 @@
 define([
     '/customize/pages.js',
     '/common/common-util.js',
-    '/calendar/recurrence.js',
+    '/common/recurrence.js',
 
     '/lib/ical.min.js'
 ], function (Pages, Util, Rec) {
@@ -52,7 +52,7 @@ define([
 
 
     module.main = function (userDoc) {
-        var content = userDoc.content;
+        var content = userDoc.content || {};
 
         var ICS = [
             'BEGIN:VCALENDAR',
@@ -95,6 +95,10 @@ define([
                         Object.keys(r.by).forEach(function (_k) {
                             rrule += ";BY"+_k.toUpperCase()+"="+r.by[_k];
                         });
+                        return;
+                    }
+                    if (k === "until") {
+                        rrule += ";"+k.toUpperCase()+"="+getICSDate(r[k]);
                         return;
                     }
                     rrule += ";"+k.toUpperCase()+"="+r[k];
@@ -223,7 +227,7 @@ define([
 
                     if (ud.from) { // "From" updates are not supported by ICS: make a new event
                         var _new = Util.clone(prev);
-                        r.until = getICSDate(d - 1); // Stop previous recursion
+                        r.until = d - 1; // Stop previous recursion
                         delete r.count;
                         addEvent(ICS, prev, null); // Add previous event
                         Array.prototype.push.apply(ICS, toAdd); // Add individual updates

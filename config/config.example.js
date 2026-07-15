@@ -50,7 +50,7 @@ module.exports = {
  */
     httpUnsafeOrigin: 'http://localhost:3000',
 
-/*  httpSafeOrigin is the URL that is used for the 'sandbox' described above.
+/*  httpSafeOrigin is the URL used for the 'sandbox' described above.
  *  If you're testing or developing with CryptPad on your local machine then
  *  it is appropriate to leave this blank. The default behaviour is to serve
  *  the main domain over port 3000 and to serve the sandbox content over port 3001.
@@ -159,9 +159,10 @@ module.exports = {
 
     /*
      *  CryptPad contains an administration panel. Its access is restricted to specific
-     *  users using the following list.
+     *  users using the following list and the management interface on the instance.
      *  To give access to the admin panel to a user account, just add their public signing
-     *  key, which can be found on the settings page for registered users.
+     *  key, which can be found on the settings page for registered users. Access can be
+     *  revoked directly from the interface, unless you added the key below.
      *  Entries should be strings separated by a comma.
      *  adminKeys: [
      *      "[cryptpad-user1@my.awesome.website/YZgXQxKR0Rcb6r6CmxHPdAGLVludrAF2lEnkbx1vVOo=]",
@@ -255,8 +256,8 @@ module.exports = {
      */
     archivePath: './data/archive',
 
-    /*  CryptPad allows logged in users to request that particular documents be
-     *  stored by the server indefinitely. This is called 'pinning'.
+    /*  CryptPad allows logged in users to request that the server 
+     *  store particular documents indefinitely. This is called 'pinning'.
      *  Pin requests are stored in a pin-store. The location of this store is
      *  defined here.
      */

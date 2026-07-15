@@ -7,7 +7,7 @@ define([
     'chainpad-listmap',
     '/components/chainpad-crypto/crypto.js',
     '/common/common-util.js',
-    '/common/outer/network-config.js',
+    '/common/network-config.js',
     '/common/common-login.js',
     '/common/common-credential.js',
     '/components/chainpad/chainpad.dist.js',
@@ -49,12 +49,17 @@ define([
     };
     if (window.location.hash) { setRedirectTo(); }
 
+    Exports.ssoRedirectTo = (localData) => {
+        redirectTo = localData?.redirectTo || redirectTo;
+    };
     Exports.ssoAuth = function (provider, cb) {
         var keys = Nacl.sign.keyPair();
         var inviteToken = window.location.hash.slice(1);
+
         localStorage.CP_sso_auth = JSON.stringify({
-            s: Nacl.util.encodeBase64(keys.secretKey),
-            p: Nacl.util.encodeBase64(keys.publicKey),
+            s: Util.encodeBase64(keys.secretKey),
+            p: Util.encodeBase64(keys.publicKey),
+            redirectTo,
             token: inviteToken
         });
         ServerCommand(keys, {
@@ -104,9 +109,9 @@ define([
 
         var proceed = function (result) {
             hashing = false;
-            if (cb && typeof cb === "function" && cb(result)) { return; }
-            LocalStore.clearLoginToken();
             Realtime.whenRealtimeSyncs(result.realtime, function () {
+                if (cb && typeof cb === "function" && cb(result)) { return; }
+                LocalStore.clearLoginToken();
                 Exports.redirect();
             });
         };
@@ -151,10 +156,20 @@ define([
                                 break;
 */
                             case 'DELETED_USER':
-                                UI.errorLoadingScreen(
-                                    UI.getDestroyedPlaceholder(result.reason, true), true, () => {
-                                        window.location.reload();
+                                if (result.reason === 'PASSWORD_CHANGE') {
+                                    UI.removeLoadingScreen(function () {
+                                        UI.alert(Messages.dph_account_pw, function () {
+                                                hashing = false;
+                                                $('#password').focus();
+                                            }
+                                        );
                                     });
+                                } else {
+                                    UI.errorLoadingScreen(
+                                        UI.getDestroyedPlaceholder(result.reason, true), true, () => {
+                                            window.location.reload();
+                                        });
+                                }
                                 break;
                             case 'INVAL_PASS':
                                 UI.removeLoadingScreen(function () {

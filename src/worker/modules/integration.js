@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-(() => {
-const factory = (Crypto) => {
+const factory = (Util, Crypto) => {
     var Integration = {};
 
     var convertToUint8 = function (obj) {
@@ -20,16 +19,28 @@ const factory = (Crypto) => {
         if (!c) { return void cb({error: 'NO_CLIENT'}); }
         var chan = ctx.channels[c.channel];
         if (!chan) { return void cb({error: 'NO_CHAN'}); }
-        var obj = {
-            id: client,
-            msg: data.msg,
-            uid: data.uid,
-        };
-        chan.sendMsg(JSON.stringify(obj), cb);
-        ctx.emit('MESSAGE', obj, chan.clients.filter(function (cl) {
-            return cl !== client;
-        }));
-
+        chan.onReady.reg(() => {
+            var obj = {
+                id: client,
+                msg: data.msg,
+                uid: data.uid,
+                user: data.user
+            };
+            if (obj.msg === 'ISAVE') {
+                ctx.pending[data.uid] = true;
+            }
+            chan.sendMsg(JSON.stringify(obj), obj => {
+                if (!ctx.pending[data.uid]) {
+                    return void setTimeout(cb, 1000);
+                }
+                delete ctx.pending[data.uid];
+                cb(obj);
+            });
+            const clients = chan.clients || [];
+            ctx.emit('MESSAGE', obj, clients.filter(cl => {
+                return cl !== client;
+            }));
+        });
     };
 
     var initIntegration = function (ctx, obj, client, cb) {
@@ -67,7 +78,9 @@ const factory = (Crypto) => {
 
         var onOpen = function (wc) {
 
-            ctx.channels[channel] = ctx.channels[channel] || {};
+            ctx.channels[channel] = ctx.channels[channel] || {
+                onReady: Util.mkEvent(true)
+            };
 
             var chan = ctx.channels[channel];
             chan.padChan = padChan;
@@ -83,16 +96,28 @@ const factory = (Crypto) => {
                 });
             }
 
+            const key = Util.encodeBase64(secret.keys?.cryptKey);
 
-            if (!chan.encryptor) { chan.encryptor = Crypto.createEncryptor(secret.keys); }
+            if (!chan.encryptor) {
+                chan.encryptor = Crypto.createEncryptor(key);
+            }
 
-            wc.on('message', function (cryptMsg) {
+            wc.on('message', function (cryptMsg, nId) {
                 var msg = chan.encryptor.decrypt(cryptMsg, secret.keys && secret.keys.validateKey);
                 var parsed;
                 try {
                     parsed = JSON.parse(msg);
+                    if (parsed.msg === "ISAVE") {
+                        delete ctx.pending[parsed.uid];
+                    }
+                    parsed.netfluxId = nId;
                     ctx.emit('MESSAGE', parsed, chan.clients);
                 } catch (e) { console.error(e); }
+            });
+
+            wc.on('leave', function (info) {
+                // Update client userlist
+                ctx.emit('LEAVE', info, chan.clients);
             });
 
             chan.wc = wc;
@@ -105,6 +130,8 @@ const factory = (Crypto) => {
                     cb({error: err});
                 });
             };
+
+            chan.onReady.fire();
 
             if (!first) { return; }
             chan.clients = [client];
@@ -122,7 +149,9 @@ const factory = (Crypto) => {
                 console.error(err);
             });
         };
-        ctx.channels[channel] = ctx.channels[channel] || {};
+        ctx.channels[channel] = ctx.channels[channel] || {
+            onReady: Util.mkEvent(true)
+        };
         ctx.channels[channel].onReconnect = onReconnect;
         network.on('reconnect', onReconnect);
     };
@@ -177,6 +206,7 @@ const factory = (Crypto) => {
             store: cfg.store,
             emit: emit,
             channels: {},
+            pending: {}, // prevent ISAVE race condition
             clients: {}
         };
 
@@ -203,17 +233,7 @@ const factory = (Crypto) => {
     return Integration;
 };
 
-if (typeof(module) !== 'undefined' && module.exports) {
-    // Code from customize can't be laoded directly in the build
-    module.exports = factory(
-        require('chainpad-crypto')
-    );
-} else if ((typeof(define) !== 'undefined' && define !== null) && (define.amd !== null)) {
-    define([
-        '/components/chainpad-crypto/crypto.js',
-    ], factory);
-} else {
-    // unsupported initialization
-}
-
-})();
+module.exports = factory(
+    require('../../common/common-util'),
+    require('chainpad-crypto')
+);

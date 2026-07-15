@@ -23,6 +23,7 @@ define([
     '/kanban/jkanban_cp.js',
     '/kanban/export.js',
     '/common/TypingTests.js',
+    '/common/common-icons.js',
 
     'cm/mode/gfm/gfm',
     'cm/addon/edit/closebrackets',
@@ -56,7 +57,8 @@ define([
     CodeMirror,
     jKanban,
     Export,
-    TypingTest)
+    TypingTest,
+    Icons)
 {
 
     var verbose = function (x) { console.log(x); };
@@ -156,25 +158,24 @@ define([
     var onRemoteChange = Util.mkEvent();
     var now = function () { return +new Date(); };
     var _lastUpdate = 0;
-    var _updateBoards = function (framework, kanban, boards) {
+    var _updateBoards = function (framework, kanban, boards, fixCursor) {
         _lastUpdate = now();
-        var cursor = getCursor();
+        let cursor;
+        if (fixCursor) { cursor = getCursor(); }
         kanban.setBoards(Util.clone(boards));
         kanban.inEditMode = false;
         addEditItemButton(framework, kanban);
         addMoveElementButton(framework, kanban);
-        restoreCursor(cursor);
-        onRemoteChange.fire();
+        if (cursor) { restoreCursor(cursor); }
     };
     var _updateBoardsThrottle = Util.throttle(_updateBoards, 1000);
-    var updateBoards = function (framework, kanban, boards) {
+    var updateBoards = function (framework, kanban, boards, fixCursor) {
         if ((now() - _lastUpdate) > 5000 || framework.isLocked()) {
-            _updateBoards(framework, kanban, boards);
+            _updateBoards(framework, kanban, boards, fixCursor);
             return;
         }
         _updateBoardsThrottle(framework, kanban, boards);
     };
-
     var editModal;
     var PROPERTIES = ['title', 'body', 'tags', 'color'];
     var BOARD_PROPERTIES = ['title', 'color'];
@@ -200,6 +201,10 @@ define([
             commit();
         });
 
+        var markdownEditorWrapper = h('div.cp-markdown-label-row', [
+            h('label', { for: 'cp-kanban-edit-body' }, Messages.kanban_body)
+        ]);
+
         var conflicts, conflictContainer, titleInput, tagsDiv, text;
         var content = h('div', [
             conflictContainer = h('div#cp-kanban-edit-conflicts', [
@@ -208,7 +213,7 @@ define([
             ]),
             h('label', {for:'cp-kanban-edit-title'}, Messages.kanban_title),
             titleInput = h('input#cp-kanban-edit-title'),
-            h('label', {for:'cp-kanban-edit-body'}, Messages.kanban_body),
+            markdownEditorWrapper,
             h('div#cp-kanban-edit-body', [
                 text = h('textarea')
             ]),
@@ -280,10 +285,21 @@ define([
             embed: function (mt) {
                 editor.focus();
                 editor.replaceSelection($(mt)[0].outerHTML);
+            },
+            toggleBar: true
+        });
+        $(markdownEditorWrapper).append(markdownTb.toggleButton);
+        $(markdownTb.toolbar).on('keydown', function (e) {
+            if (e.which === 27) { // Escape key
+                e.preventDefault();
+                e.stopPropagation();
+                editor.focus(); // Focus the editor instead of closing the modal
+            }
+            else if (e.which === 13 || e.which === 9) { // "Enter" or "Tab" key should not close modal
+                e.stopPropagation();
             }
         });
         $(text).before(markdownTb.toolbar);
-        $(markdownTb.toolbar).show();
         editor.refresh();
         var body = {
             getValue: function () {
@@ -306,6 +322,9 @@ define([
         SFCodeMirror.mkIndentSettings(editor, framework._.cpNfInner.metadataMgr);
         editor.on('change', function () {
             var val = editor.getValue();
+            if (!dataObject) {
+                return editor.toTextArea();
+            }
             if (dataObject.body === val) { return; }
             dataObject.body = val;
             commit();
@@ -374,7 +393,7 @@ define([
                     });
                 };
                 _field.tokenfield.on('tokenfield:createdtoken', commitTags);
-                _field.tokenfield.on('tokenfield:editedoken', commitTags);
+                _field.tokenfield.on('tokenfield:editedtoken', commitTags);
                 _field.tokenfield.on('tokenfield:removedtoken', commitTags);
             }
         };
@@ -413,6 +432,10 @@ define([
                     var list = boards.list || [];
                     var idx = list.indexOf(id);
                     if (idx !== -1) { list.splice(idx, 1); }
+                    var boardItems = (boards.data || {})[id].item;
+                    boardItems.forEach(function(item) {
+                        delete kanban.options.boards.items[item];
+                    });
                     delete (boards.data || {})[id];
                     kanban.removeBoard(id);
                     return void commit();
@@ -465,7 +488,7 @@ define([
                 });
                 dataObject = kanban.getBoardJSON(id);
                 $(content)
-                    .find('#cp-kanban-edit-body, #cp-kanban-edit-tags, [for="cp-kanban-edit-body"], [for="cp-kanban-edit-tags"]')
+                    .find('#cp-kanban-edit-body, #cp-kanban-edit-tags, .cp-markdown-label-row, [for="cp-kanban-edit-body"], [for="cp-kanban-edit-tags"]')
                     .hide();
             } else {
                 onCursorUpdate.fire({
@@ -473,7 +496,7 @@ define([
                 });
                 dataObject = kanban.getItemJSON(id);
                 $(content)
-                    .find('#cp-kanban-edit-body, #cp-kanban-edit-tags, [for="cp-kanban-edit-body"], [for="cp-kanban-edit-tags"]')
+                    .find('#cp-kanban-edit-body, #cp-kanban-edit-tags, .cp-markdown-label-row, [for="cp-kanban-edit-body"], [for="cp-kanban-edit-tags"]')
                     .show();
             }
             // Also reset the buttons
@@ -612,7 +635,7 @@ define([
                     'title': Messages.kanban_moveBoardLeft,
                     'aria-label': Messages.kanban_moveBoardLeft
                 }, [
-                    h('i.fa.fa-arrow-left', {'aria-hidden': true})
+                    Icons.get('chevron-left')
                 ])).click(function () { 
                     shiftBoards('left', el);
                 }).appendTo(arrowContainer);
@@ -621,7 +644,7 @@ define([
                     'title': Messages.kanban_moveBoardRight,
                     'aria-label': Messages.kanban_moveBoardRight
                 }, [
-                    h('i.fa.fa-arrow-right', {'aria-hidden': true})
+                   Icons.get('chevron-right')
                 ])).click(function () {
                     shiftBoards('right', el);
                 }).appendTo(arrowContainer);
@@ -636,7 +659,7 @@ define([
                     'title': Messages.moveItemLeft,
                     'aria-label': Messages.moveItemLeft
                 }, [
-                    h('i.fa.fa-arrow-left', {'aria-hidden': true})
+                    Icons.get('chevron-left')
                 ])).click(function () {
                     shiftItem('left', el);
                 }).appendTo(arrowContainerItem);
@@ -648,7 +671,7 @@ define([
                     'title': Messages.moveItemDown,
                     'aria-label': Messages.moveItemDown
                 }, [
-                    h('i.fa.fa-arrow-down', {'aria-hidden': true})
+                    Icons.get('chevron-down')
                 ])).click(function () {
                     shiftItem('down', el);
                 }).appendTo(centralArrowContainerItem);
@@ -658,7 +681,7 @@ define([
                     'title': Messages.moveItemUp,
                     'aria-label': Messages.moveItemUp
                 }, [
-                    h('i.fa.fa-arrow-up', {'aria-hidden': true})
+                    Icons.get('chevron-up')
                 ])).click(function () {
                     shiftItem('up', el);
                 }).appendTo(centralArrowContainerItem);
@@ -668,7 +691,7 @@ define([
                     'title': Messages.moveItemRight,
                     'aria-label': Messages.moveItemRight
                 }, [
-                    h('i.fa.fa-arrow-right', {'aria-hidden': true})
+                    Icons.get('chevron-right')
                 ])).click(function () {
                     shiftItem('right', el);
                 }).appendTo(arrowContainerItem);
@@ -688,7 +711,7 @@ define([
                 'title': Messages.kanban_editCard,
                 'aria-label': Messages.kanban_editCard
             }, [
-                h('i.fa.fa-pencil', {'aria-hidden': true})
+                Icons.get('edit')
             ])).click(function (e) {
                 getItemEditModal(framework, kanban, itemId);
                 e.stopPropagation();
@@ -701,7 +724,7 @@ define([
                 'title': Messages.kanban_editBoard,
                 'aria-label': Messages.kanban_editBoard
             }, [
-                h('i.fa.fa-pencil', {'aria-hidden': true})
+                Icons.get('edit')
             ])).click(function (e) {
                 getBoardEditModal(framework, kanban, itemId);
                 e.stopPropagation();
@@ -1033,6 +1056,19 @@ define([
             boards: boards,
             _boards: Util.clone(boards),
         });
+        // disable dragging when editing
+        $(document).on('mousedown', '.kanban-item input, .kanban-title-board input', function (e) {
+            kanban.options.dragItems = false;
+            e.stopPropagation();
+        });
+        $(document).on('mouseup', function (e) {
+            var selectionActive = window.getSelection && window.getSelection().toString().length > 0;
+            if (!selectionActive) {
+                var drag = kanban.drag;
+                kanban.options.dragItems = drag;
+            }
+            e.stopPropagation();
+        });
 
         framework._.cpNfInner.metadataMgr.onChange(function () {
             var md = framework._.cpNfInner.metadataMgr.getPrivateData();
@@ -1042,7 +1078,7 @@ define([
             // If the rendering has changed, update the value and redraw
             kanban.options.tagsAnd = tagsAnd;
             _tagsAnd = tagsAnd;
-            updateBoards(framework, kanban, kanban.options.boards);
+            updateBoards(framework, kanban, kanban.options.boards, false);
         });
 
         if (migrated) { framework.localChange(); }
@@ -1075,8 +1111,8 @@ define([
         var $cContainer = $('#cp-app-kanban-container');
         var addControls = function () {
             // Quick or normal mode
-            var small = h('button.cp-kanban-view-small.fa.fa-minus');
-            var big = h('button.cp-kanban-view.fa.fa-bars');
+            var small = h('button.cp-kanban-view-small', Icons.get('kanban-minimize'));
+            var big = h('button.cp-kanban-view', Icons.get('kanban-maximize'));
             $(small).click(function () {
                 if ($cContainer.hasClass('cp-kanban-quick')) { return; }
                 $cContainer.addClass('cp-kanban-quick');
@@ -1092,7 +1128,7 @@ define([
             var existing = getExistingTags(kanban.options.boards);
             var list = h('div.cp-kanban-filterTags-list');
             var reset = h('button.btn.btn-cancel.cp-kanban-filterTags-reset.cp-kanban-toggle-tags', [
-                h('i.fa.fa-times'),
+                Icons.get('close'),
                 h('span', Messages.kanban_clearFilter)
             ]);
             var hint = h('span.cp-kanban-filterTags-name', Messages.kanban_tags);
@@ -1150,15 +1186,24 @@ define([
                 allTags.forEach(function (t) {
                     var tag;
                     $list.append(tag = h('span', {
-                        'data-tag': t
+                        'data-tag': t,
+                        'tabindex': 0,
+                        'role': 'button',
+                        'aria-pressed': 'false'
                     }, t));
                     var $tag = $(tag).click(function () {
                         if ($tag.hasClass('active')) {
                             $tag.removeClass('active');
+                            $tag.attr('aria-pressed', 'false');
                         } else {
                             $tag.addClass('active');
+                            $tag.attr('aria-pressed', 'true');
                         }
                         commitTags();
+                    }).keydown(function (e) {
+                        if (e.which === 13 || e.which === 32) {
+                            $tag.click();
+                        }
                     });
                 });
             };
@@ -1186,8 +1231,8 @@ define([
                 commitTags();
             });
 
-            let toggleTagsButton = h('button.btn.btn-toolbar-alt.cp-kanban-toggle-tags', [
-                h('i.fa.fa-tags'),
+            let toggleTagsButton = h('button.btn.btn-toolbar-alt.cp-kanban-toggle-tags', {'aria-expanded': 'true'}, [
+                Icons.get('kanban-tags'),
                 h('span', Messages.fm_tagsName)
             ]);
             let toggleContainer = h('div.cp-kanban-toggle-container', toggleTagsButton);
@@ -1198,6 +1243,7 @@ define([
             let toggle = () => {
                 $tags.toggle();
                 let visible = $tags.is(':visible');
+                $toggleBtn.attr('aria-expanded', visible.toString());
                 $(toggleContainer).toggleClass('cp-kanban-container-flex', !visible);
                 $toggleBtn.toggleClass('btn-toolbar-alt', visible);
                 $toggleBtn.toggleClass('btn-toolbar', !visible);
@@ -1228,8 +1274,8 @@ define([
 
             var toggleOffclass = 'ontouchstart' in window ? 'cp-toggle-active' : 'cp-toggle-inactive'; 
             var toggleOnclass = 'ontouchstart' in window ? 'cp-toggle-inactive' : 'cp-toggle-active'; 
-            var toggleDragOff = h(`button#toggle-drag-off.cp-kanban-view-drag.${toggleOffclass}.fa.fa-arrows`, {'title': Messages.toggleArrows, 'tabindex': 0});
-            var toggleDragOn = h(`button#toggle-drag-on.cp-kanban-view-drag.${toggleOnclass}.fa.fa-hand-o-up`, {'title': Messages.toggleDrag, 'tabindex': 0});
+            var toggleDragOff = h(`button#toggle-drag-off.cp-kanban-view-drag.${toggleOffclass}`, {'title': Messages.toggleArrows, 'tabindex': 0}, Icons.get('select'));
+            var toggleDragOn = h(`button#toggle-drag-on.cp-kanban-view-drag.${toggleOnclass}`, {'title': Messages.toggleDrag, 'tabindex': 0}, Icons.get('touch-mode'));
             kanban.drag = 'ontouchstart' in window ? false : true;
             const updateDrag = state => {
                 return function () {
@@ -1479,7 +1525,8 @@ define([
             if (Sortify(currentContent) !== Sortify(remoteContent)) {
                 verbose("Content is different.. Applying content");
                 kanban.options.boards = remoteContent;
-                updateBoards(framework, kanban, remoteContent);
+                updateBoards(framework, kanban, remoteContent, true);
+                onRemoteChange.fire();
             }
         });
 

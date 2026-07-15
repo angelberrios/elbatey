@@ -61,7 +61,6 @@ const factory = (Crypto, CPNetflux, Netflux, Util,
         nThen(function (waitFor) {
             Session.accessKeys.forEach(function (obj) {
                 Pinpad.create(config.network, obj, waitFor(function (e) {
-                    console.log('done', obj);
                     if (e) { console.error(e); }
                 }));
             });
@@ -225,8 +224,8 @@ if (typeof(module) !== 'undefined' && module.exports) {
         '/common/common-util.js',
         '/common/common-hash.js',
         '/common/common-realtime.js',
-        '/common/outer/network-config.js',
-        '/common/outer/cache-store.js',
+        '/common/network-config.js',
+        '/common/cache-store.js',
         '/common/pinpad.js',
         '/components/nthen/index.js',
         '/components/chainpad/chainpad.dist.js',

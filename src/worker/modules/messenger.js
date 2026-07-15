@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-(() => {
 const factory = (Crypto, Hash, Util, Realtime, Messaging,
-                Constants, Messages = {}, PadTypes, nThen) => {
+                Constants, PadTypes, nThen) => {
     var Curve = Crypto.Curve;
 
-    var Msg = {};
+    const Msg = {};
+    let Messages = {};
 
     Msg.setCustomize = data => {
         Messages = data.Messages;
@@ -15,6 +15,7 @@ const factory = (Crypto, Hash, Util, Realtime, Messaging,
 
     var Types = {
         message: 'MSG',
+        cleared: 'CLEARED',
         unfriend: 'UNFRIEND',
         mapId: 'MAP_ID',
         mapIdAck: 'MAP_ID_ACK'
@@ -116,7 +117,6 @@ const factory = (Crypto, Hash, Util, Realtime, Messaging,
 
     var getChannelMessagesSince = function (ctx, channel, data, keys) {
         var network = ctx.store.network;
-        console.log('Fetching [%s] messages since [%s]', channel.id, data.lastKnownHash || '');
 
         if (channel.isPadChat || channel.isTeamChat) {
             // We need to use GET_HISTORY_RANGE to make sure we won't get the full history
@@ -271,6 +271,11 @@ const factory = (Crypto, Hash, Util, Realtime, Messaging,
             return true;
         }
         var proxy = ctx.store.proxy;
+        if (parsedMsg[0] === Types.cleared) {
+            channel.messages = [];
+            ctx.emit('CLEAR_CHANNEL', channel.id, channel.clients);
+            return;
+        }
         if (parsedMsg[0] === Types.unfriend) {
             curvePublic = parsedMsg[1];
 
@@ -917,11 +922,21 @@ const factory = (Crypto, Hash, Util, Realtime, Messaging,
         var channel = ctx.channels[id];
         if (!channel) { return void cb({error: 'NO_CHANNEL'}); }
         if (!ctx.store.rpc) { return void cb({error: 'RPC_NOT_READY'}); }
+        var proxy = ctx.store.proxy || {};
         ctx.store.rpc.clearOwnedChannel(id, function (err) {
             cb({error:err});
             if (!err) {
                 channel.messages = [];
                 ctx.emit('CLEAR_CHANNEL', id, channel.clients);
+                var msg = [Types.cleared, proxy.curvePublic, +new Date()];
+                var msgStr = JSON.stringify(msg);
+                var cryptMsg = channel.encrypt(msgStr);
+
+                channel.wc.bcast(cryptMsg).then(function () {
+                    // Success (message sent)
+                }, function (err) {
+                    console.error('Failed to send message:', err);
+                });
             }
         });
     };
@@ -1119,34 +1134,13 @@ const factory = (Crypto, Hash, Util, Realtime, Messaging,
     return Msg;
 };
 
-if (typeof(module) !== 'undefined' && module.exports) {
-    // Code from customize can't be laoded directly in the build
-    module.exports = factory(
-        require('chainpad-crypto'),
-        require('../../common/common-hash'),
-        require('../../common/common-util'),
-        require('../../common/common-realtime'),
-        require('../../common/common-messaging'),
-        require('../../common/common-constants'),
-        undefined,
-        require('../../common/pad-types'),
-        require('nthen')
-    );
-} else if ((typeof(define) !== 'undefined' && define !== null) && (define.amd !== null)) {
-    define([
-        '/components/chainpad-crypto/crypto.js',
-        '/common/common-hash.js',
-        '/common/common-util.js',
-        '/common/common-realtime.js',
-        '/common/common-messaging.js',
-        '/common/common-constants.js',
-        '/customize/messages.js',
-        '/common/pad-types.js',
-
-        '/components/nthen/index.js',
-    ], factory);
-} else {
-    // unsupported initialization
-}
-
-})();
+module.exports = factory(
+    require('chainpad-crypto'),
+    require('../../common/common-hash'),
+    require('../../common/common-util'),
+    require('../../common/common-realtime'),
+    require('../components/messaging'),
+    require('../../common/common-constants'),
+    require('../../common/pad-types'),
+    require('nthen')
+);

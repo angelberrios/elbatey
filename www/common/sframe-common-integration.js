@@ -10,7 +10,8 @@ define([
     module.create = function (
         Common,
         saveHandler,
-        unsavedChangesHandler) {
+        unsavedChangesHandler,
+        onUserlistChange) {
 
         var exp = {};
         var metadataMgr = Common.getMetadataMgr();
@@ -25,9 +26,14 @@ define([
             throw new Error("Incorrect unsaves changes handler");
         }
 
+        const isView = privateData.readOnly;
+
+        const myUid = metadataMgr.getUserData().netfluxId || Util.uid();
+
         var debug = console.warn;
         //debug = function () {};
         var execCommand = function () {}; // placeholder
+
 
         var state = {
             changed: false,
@@ -47,6 +53,7 @@ define([
         var SAVE_TO = Math.min((BASE_TIMER / 2), 10000);
 
         const setStateChanged = function(newValue) {
+            if (isView) { return; }
             if (state.changed === newValue) {
                 return;
             }
@@ -57,6 +64,7 @@ define([
         var saved = function () {}; // placeholder;
         var save = function (id) {
             id = id || Util.uid();
+            if (isView) { return; }
             requestSave(id, function (allowed) {
                 if (!allowed) { return; }
 
@@ -85,14 +93,50 @@ define([
             });
         };
 
+        const users = {};
+
+        // Send JOIN message
+        const updateUserList = () => {
+            if (!users[myUid]) { return; }
+            onUserlistChange(Util.clone(users));
+        };
+
+        const sendMyID = () => {
+            const user = Util.clone(privateData?.integrationConfig?.
+                                    _?.editorConfig?.user) || {};
+            user.readOnly = isView;
+            execCommand?.('SEND', {
+                msg: 'MYID',
+                user
+            }, function (err) {
+                if (err) { console.error(err); }
+                if (users[myUid]) { return; }
+                users[myUid] = user;
+                updateUserList();
+            });
+        };
+
+        const onLeave = (obj) => {
+            delete users[obj];
+            updateUserList();
+        };
+
         var onMessage = function (data) {
             if (!data || !data.msg) { return; }
             debug('Integration onMessage', data);
+            if (data.msg === "MYID") {
+                const { user, netfluxId } = data;
+                if (users[netfluxId]) { return; }
+                users[netfluxId] = user;
+                updateUserList();
+                sendMyID();
+                return;
+            }
             if (data.msg === "ISAVE") {
                 if (state.me) { return; } // I have the lock: abort
                 if (state.other && state.other !== data.uid) { return; } // someone else has the lock
                 // If state.other === data.uid ==> save failed and someone else tries again
-                if (!state.changed) { return; }
+                if (!state.changed && state.other !== data.uid) { return; }
                 // If !state.other: nobody has the lock, give them
                 state.other = data.uid;
                 state.lastTmp = +new Date();
@@ -103,6 +147,7 @@ define([
                 setStateChanged(false);
                 saveTo = setTimeout(function () {
                     // They weren't able to save in time, try ourselves
+                    setStateChanged(true);
                     var id = state.other;
                     state.other = false;
                     save(id);
@@ -132,9 +177,14 @@ define([
             }
         };
 
+
         var onEvent = function (obj) {
             var cmd = obj.ev;
             var data = obj.data;
+            if (cmd === 'LEAVE') {
+                onLeave(data);
+                return;
+            }
             if (cmd === 'MESSAGE') {
                 onMessage(data);
                 return;
@@ -151,7 +201,7 @@ define([
         // is already saving
         requestSave = function (id, cb) {
             if (state.other || state.me) { return void cb(false); } // save in progress
-            debug('Integration send ISAVE');
+            debug('Integration send ISAVE', id);
             alreadySaved = false; // someone may have saved while we were waiting for our callback
             execCommand('SEND', {
                 msg: 'ISAVE',
@@ -209,10 +259,13 @@ define([
 
             // If someone is saving, nothing to do
             if (state.other || state.me) { return; }
+            if (isView) { return; }
 
             // We need a save: refresh TO
             addOnSettleTo();
         };
+
+        sendMyID();
 
         return exp;
     };

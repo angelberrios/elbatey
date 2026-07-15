@@ -7,8 +7,10 @@ define([
     '/components/nthen/index.js',
     '/api/config',
     '/common/dom-ready.js',
+    '/common/common-hash.js',
     '/common/sframe-common-outer.js',
-], function (nThen, ApiConfig, DomReady, SFCommonO) {
+    '/common/outer/local-store.js'
+], function (nThen, ApiConfig, DomReady, Hash, SFCommonO, LocalStore) {
 
     var href, hash;
     // Loaded in load #2
@@ -23,13 +25,17 @@ define([
         var getPropChannels = function () {
             return channels;
         };
-        var addData = function (meta, CryptPad, user, Utils) {
+        var addData = function (meta, CryptPad, user, Utils, parsedHash) {
             var keys = Utils.secret && Utils.secret.keys;
-
-            var parsed = Utils.Hash.parseTypeHash('pad', hash.slice(1));
+            var parsed;
+            if (parsedHash) {
+                parsed = parsedHash.hashData;
+            } else {
+                parsed = Utils.Hash.parseTypeHash('pad', hash.slice(1));
+            }
             if (parsed && parsed.auditorKey) {
                 meta.form_auditorKey = parsed.auditorKey;
-                meta.form_auditorHash = hash;
+                meta.form_auditorHash = hash.charAt(0) === '#' ? hash.slice(1) : hash;
             }
 
             var formData = Utils.Hash.getFormData(Utils.secret);
@@ -45,6 +51,9 @@ define([
         var addRpc = function (sframeChan, Cryptpad) {
             sframeChan.on('EV_FORM_PIN', function (data) {
                 channels.answersChannel = data.channel;
+                Cryptpad.otherPadAttrs = {
+                    answersChannel: data.channel
+                };
                 Cryptpad.changeMetadata();
                 Cryptpad.getPadAttribute('answersChannel', function (err, res) {
                     // If already stored, don't pin it again
@@ -55,11 +64,12 @@ define([
                 });
             });
         };
+        const parsed = Hash.parsePadUrl(href);
         SFCommonO.start({
             addData: addData,
             addRpc: addRpc,
             //cache: true,
-            noDrive: true,
+            noDrive: (parsed?.hashData?.mode !== "view" || !LocalStore.isLoggedIn()),
             hash: hash,
             href: href,
             useCreationScreen: true,

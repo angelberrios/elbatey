@@ -2,12 +2,11 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-(() => {
 const factory = (Util, Hash, Constants, Realtime, ProxyManager,
                 UserObject, SF, Roster, Messaging, Feedback,
                 Invite, Crypt, Cache, Pinpad, Listmap, Crypto,
                 CpNetflux, ChainPad, nThen, Nacl) => {
-    var Team = {};
+    const Team = {};
 
     Nacl = Nacl || (typeof(window) !== "undefined" && window.nacl);
     var onStoreReady = Util.mkEvent(true);
@@ -108,6 +107,7 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
         try { team.roster.stop(); } catch (e) {}
         team.proxy = {};
         team.stopped = true;
+        team?.rpc?.destroy();
         delete ctx.teams[teamId];
         delete ctx.cache[teamId];
         delete ctx.store.proxy.teams[teamId];
@@ -123,41 +123,41 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
         }
     };
 
-    var getTeamChannelList = function (ctx, id) {
+    var getTeamChannelList = function (ctx, compareHash, id) {
         // Get the list of pads' channel ID in your drive
         // This list is filtered so that it doesn't include pad owned by other users
         // It now includes channels from shared folders
         var store = ctx.teams[id];
         if (!store) { return null; }
-        var list = store.manager.getChannelsList('pin');
+        var list = store.manager.getChannelsList('pin'); // list is a Set
 
         var team = ctx.store.proxy.teams[id];
-        list.push(`${team.channel}#drive`);
+        const teamChan = compareHash ? team.channel : `${team.channel}#drive`;
+        list.add(teamChan);
         var chatChannel = Util.find(team, ['keys', 'chat', 'channel']);
         var membersChannel = Util.find(team, ['keys', 'roster', 'channel']);
         var mailboxChannel = Util.find(team, ['keys', 'mailbox', 'channel']);
-        if (chatChannel) { list.push(chatChannel); }
-        if (membersChannel) { list.push(membersChannel); }
-        if (mailboxChannel) { list.push(mailboxChannel); }
+        if (chatChannel) { list.add(chatChannel); }
+        if (membersChannel) { list.add(membersChannel); }
+        if (mailboxChannel) { list.add(mailboxChannel); }
 
         if (store.proxy.calendars) {
             var cList = Object.keys(store.proxy.calendars).map(function (c) {
                 return store.proxy.calendars[c].channel;
             });
-            list = list.concat(cList);
+            cList.forEach(id => list.add(id));
         }
 
         var state = store.roster.getState();
         if (state.members) {
             Object.keys(state.members).forEach(function (curve) {
                 var m = state.members[curve];
-                if (m.inviteChannel && m.pending) { list.push(m.inviteChannel); }
-                if (m.previewChannel && m.pending) { list.push(m.previewChannel); }
+                if (m.inviteChannel && m.pending) { list.add(m.inviteChannel); }
+                if (m.previewChannel && m.pending) { list.add(m.previewChannel); }
             });
         }
 
-        list.sort();
-        return list;
+        return Array.from(list).sort();
     };
 
     var handleSharedFolder = function (ctx, id, sfId, rt) {
@@ -298,7 +298,7 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
                         teamId: id
                     };
                 }
-                ctx.Store.removeOwnedChannel('', data, cb);
+                ctx.Store.pad.destroy('', data, cb);
             },
             Store: ctx.Store,
             store: ctx.store
@@ -365,14 +365,15 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
             });
         }).nThen(function () {
             if (!team.rpc) { return; }
-            var list = getTeamChannelList(ctx, id);
+            var list = getTeamChannelList(ctx, true, id);
             var local = Hash.hashChannelList(list);
             // Check pin list
             team.rpc.getServerHash(function (e, hash) {
                 if (e) { return void console.warn(e); }
                 if (hash !== local) {
                     // Reset pin list
-                    team.rpc.reset(list, function (e/*, hash*/) {
+                    var list2 = getTeamChannelList(ctx, false, id);
+                    team.rpc.reset(list2, function (e/*, hash*/) {
                         if (e) { console.warn(e); }
                     });
                 }
@@ -758,13 +759,13 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
                         channel: Hash.createChannelId(),
                         viewed: [],
                         keys: {
-                            curvePrivate: Nacl.util.encodeBase64(curvePair.secretKey),
-                            curvePublic: Nacl.util.encodeBase64(curvePair.publicKey)
+                            curvePrivate: Util.encodeBase64(curvePair.secretKey),
+                            curvePublic: Util.encodeBase64(curvePair.publicKey)
                         }
                     },
                     drive: {
-                        edPrivate: Nacl.util.encodeBase64(keyPair.secretKey),
-                        edPublic: Nacl.util.encodeBase64(keyPair.publicKey)
+                        edPrivate: Util.encodeBase64(keyPair.secretKey),
+                        edPublic: Util.encodeBase64(keyPair.publicKey)
                     },
                     chat: {
                         edit: chatHashes.editHash,
@@ -853,7 +854,7 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
             // For each pad, check on the server if there are other owners.
             // If yes, then remove yourself as an owner
             // If no, delete the pad
-            var ownedPads = team.manager.getChannelsList('owned');
+            var ownedPads = Array.from(team.manager.getChannelsList('owned'));
             var sem = Util.Saferphore.create(10);
             ownedPads.forEach(function (c) {
                 var w = waitFor();
@@ -880,7 +881,7 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
                         }));
                     }).nThen(function (_w) {
                         if (otherOwners) {
-                            ctx.Store.setPadMetadata(null, {
+                            ctx.Store.pad.setMetadata(null, {
                                 channel: c,
                                 command: 'RM_OWNERS',
                                 value: [teamEdPublic],
@@ -984,7 +985,7 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
         var md;
         nThen(function (waitFor) {
             // Get pending owners
-            ctx.Store.getPadMetadata(null, {
+            ctx.Store.pad.getMetadata(null, {
                 channel: teamData.channel
             }, waitFor(function (obj) {
                 if (obj && obj.error) {
@@ -1007,7 +1008,7 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
                     });
                     if (!member && teamData.owner) {
                         var removeOwnership = function (chan) {
-                            ctx.Store.setPadMetadata(null, {
+                            ctx.Store.pad.setMetadata(null, {
                                 channel: chan,
                                 command: 'RM_PENDING_OWNERS',
                                 value: [ed],
@@ -1120,7 +1121,7 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
                 }
             };
             var addPendingOwner = function (chan) {
-                ctx.Store.setPadMetadata(null, {
+                ctx.Store.pad.setMetadata(null, {
                     channel: chan,
                     command: 'ADD_PENDING_OWNERS',
                     value: [user.edPublic],
@@ -1176,7 +1177,7 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
                 }
             };
             var removeOwnership = function (chan) {
-                ctx.Store.setPadMetadata(null, {
+                ctx.Store.pad.setMetadata(null, {
                     channel: chan,
                     command: cmd,
                     value: [user.edPublic],
@@ -1393,7 +1394,7 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
         var md;
         nThen(function (waitFor) {
             // Get pending owners
-            ctx.Store.getPadMetadata(null, {
+            ctx.Store.pad.getMetadata(null, {
                 channel: teamData.channel
             }, waitFor(function (obj) {
                 if (obj && obj.error) {
@@ -1868,7 +1869,7 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
         if (team.keys && team.keys.mailbox) { return team.keys.mailbox; }
         var strSeed = Util.find(team, ['keys', 'roster', 'edit']);
         if (!strSeed) { return; }
-        var hash = Nacl.hash(Nacl.util.decodeUTF8(strSeed));
+        var hash = Nacl.hash(Util.decodeUTF8(strSeed));
         var seed = hash.slice(0,32);
         var mailboxChannel = Util.uint8ArrayToHex(hash.slice(32,48));
         var curvePair = Nacl.box.keyPair.fromSecretKey(seed);
@@ -1876,8 +1877,8 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
             channel: mailboxChannel,
             viewed: [],
             keys: {
-                curvePrivate: Nacl.util.encodeBase64(curvePair.secretKey),
-                curvePublic: Nacl.util.encodeBase64(curvePair.publicKey)
+                curvePrivate: Util.encodeBase64(curvePair.secretKey),
+                curvePublic: Util.encodeBase64(curvePair.publicKey)
             }
         };
     };
@@ -1919,9 +1920,9 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
         var checkKeyPair = function (edPrivate, edPublic) {
             if (!edPrivate || !edPublic) { return true; }
             try {
-                var secretKey = Nacl.util.decodeBase64(edPrivate);
+                var secretKey = Util.decodeBase64(edPrivate);
                 var pair = Nacl.sign.keyPair.fromSecretKey(secretKey);
-                return Nacl.util.encodeBase64(pair.publicKey) === edPublic;
+                return Util.encodeBase64(pair.publicKey) === edPublic;
             } catch (e) {
                 return false;
             }
@@ -2241,59 +2242,27 @@ const factory = (Util, Hash, Constants, Realtime, ProxyManager,
     return Team;
 };
 
-if (typeof(module) !== 'undefined' && module.exports) {
-    // Code from customize can't be laoded directly in the build
-    module.exports = factory(
-        require('../../common/common-util'),
-        require('../../common/common-hash'),
-        require('../../common/common-constants'),
-        require('../../common/common-realtime'),
+module.exports = factory(
+    require('../../common/common-util'),
+    require('../../common/common-hash'),
+    require('../../common/common-constants'),
+    require('../../common/common-realtime'),
 
-        require('../../common/proxy-manager'),
-        require('../../common/user-object'),
-        require('../components/sharedfolder'),
-        require('../components/roster'),
-        require('../../common/common-messaging'),
-        require('../../common/common-feedback'),
-        require('../components/invitation'),
-        require('../../common/cryptget'),
-        require('../../common/cache-store'),
-        require('../../common/pinpad'),
+    require('../../common/proxy-manager'),
+    require('../../common/user-object'),
+    require('../components/sharedfolder'),
+    require('../components/roster'),
+    require('../components/messaging'),
+    require('../../common/common-feedback'),
+    require('../components/invitation'),
+    require('../../common/cryptget'),
+    require('../../common/cache-store'),
+    require('../../common/pinpad'),
 
-        require('chainpad-listmap'),
-        require('chainpad-crypto'),
-        require('chainpad-netflux'),
-        require('chainpad'),
-        require('nthen'),
-        require('tweetnacl/nacl-fast'),
-    );
-} else if ((typeof(define) !== 'undefined' && define !== null) && (define.amd !== null)) {
-    define([
-        '/common/common-util.js',
-        '/common/common-hash.js',
-        '/common/common-constants.js',
-        '/common/common-realtime.js',
-
-        '/common/proxy-manager.js',
-        '/common/user-object.js',
-        '/common/outer/sharedfolder.js',
-        '/common/outer/roster.js',
-        '/common/common-messaging.js',
-        '/common/common-feedback.js',
-        '/common/outer/invitation.js',
-        '/common/cryptget.js',
-        '/common/outer/cache-store.js',
-        '/common/pinpad.js',
-
-        'chainpad-listmap',
-        '/components/chainpad-crypto/crypto.js',
-        'chainpad-netflux',
-        '/components/chainpad/chainpad.dist.js',
-        '/components/nthen/index.js',
-        '/components/tweetnacl/nacl-fast.min.js',
-    ], factory);
-} else {
-    // unsupported initialization
-}
-
-})();
+    require('chainpad-listmap'),
+    require('chainpad-crypto'),
+    require('chainpad-netflux'),
+    require('chainpad'),
+    require('nthen'),
+    require('tweetnacl/nacl-fast'),
+);

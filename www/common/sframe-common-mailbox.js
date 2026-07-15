@@ -10,8 +10,10 @@ define([
     '/common/common-ui-elements.js',
     '/common/notifications.js',
     '/common/hyperscript.js',
+    '/customize/application_config.js',
     '/customize/messages.js',
-], function ($, Util, Hash, UI, UIElements, Notifications, h, Messages) {
+    '/common/common-icons.js',
+], function ($, Util, Hash, UI, UIElements, Notifications, h, AppConfig, Messages, Icons) {
     var Mailbox = {};
 
     Mailbox.create = function (Common) {
@@ -66,12 +68,12 @@ define([
                 return;
             }
             if (data.type === 'broadcast') {
-                avatar = h('i.fa.fa-bullhorn.cp-broadcast');
+                avatar = Icons.get('announcement', {'class': 'cp-broadcast'});
                 if (/^LOCAL\|/.test(data.content.hash)) {
                     $(avatar).addClass('preview');
                 }
             } else if (data.type === 'reminders') {
-                avatar = h('i.fa.fa-calendar.cp-broadcast.preview');
+                avatar = Icons.get('calendar', {class:'cp-broadcast preview'});
                 if (priv.app !== 'calendar') { avatar.classList.add('cp-reminder'); }
                 $(avatar).click(function (e) {
                     e.stopPropagation();
@@ -81,17 +83,22 @@ define([
                     Common.openURL(Hash.hashToHref('', 'calendar'));
                 });
             } else if (userData && typeof(userData) === "object" && userData.profile) {
-                avatar = h('span.cp-avatar');
+                avatar = h('span.cp-avatar',{
+                    tabindex: 0,
+                    title: Messages.userlist_visitProfile,
+                    'aria-label': Messages.userlist_visitProfile,
+                    role: 'button'
+                });
                 Common.displayAvatar($(avatar), userData.avatar, userData.displayName || userData.name);
-                $(avatar).click(function (e) {
+                const handler = function (e) {
                     e.stopPropagation();
                     Common.openURL(Hash.hashToHref(userData.profile, 'profile'));
-                });
+                };
+                Util.onClickEnter($(avatar), handler, { space: true });
             } else if (userData && userData.supportTeam) {
                 avatar = h('span.cp-avatar-image', h('img', { src:'/customize/CryptPad_logo.svg' }));
             }
             var order = -Math.floor((Util.find(data, ['content', 'msg', 'ctime']) || 0) / 1000);
-            const tabIndexValue = undefined;//data.content.isDismissible ? undefined : '0';
             notif = h('li.cp-notification', {
                 role: 'menuitem',
                 tabindex: '0',
@@ -100,7 +107,7 @@ define([
             }, [
                 avatar,
                 h('div.cp-notification-content', {
-                    tabindex: tabIndexValue
+                    tabindex: 0
                 }, [
                     h('p', data.content.msg.type + ' - ' +formatData(data))
                 ])
@@ -110,6 +117,13 @@ define([
             }
             if (typeof(data.content.getFormatText) === "function") {
                 $(notif).find('.cp-notification-content p').html(data.content.getFormatText());
+                $(notif).find('a').click(e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const href = e.target.href || '';
+                    if (!/^(http|\/)/.test(href)) { return; }
+                    Common.openURL(e.target.href);
+                });
                 if (data.content.autorefresh) {
                     var it = setInterval(function () {
                         if (!data.content.autorefresh) {
@@ -119,24 +133,31 @@ define([
                         $(notif).find('.cp-notification-content p').html(data.content.getFormatText());
                     }, 60000);
                 }
+                const label = $(notif).find('.cp-notification-content p').text();
+                $(notif).find('.cp-notification-content').attr('aria-label', label);
             }
 
             $(notif).mouseenter((e) => {
                 e.stopPropagation();
-                $(notif).focus();
+                if($(notif).find('li[tabindex="0"]').length) {
+                    $(notif).focus();
+                };
             });
 
             if (data.content.isClickable) {
-                $(notif).find('.cp-notification-content').addClass("cp-clickable").on('click keypress', function (event) {
+                $(notif).find('.cp-notification-content').addClass("cp-clickable").attr('role', 'link').on('click keypress', function (event) {
                     if (event.type === 'click' || (event.type === 'keypress' && event.which === 13)) {
                         data.content.handler();
                     }
                 });
             }
             if (data.content.isDismissible) {
-                var dismissIcon = h('span.fa.fa-times');
+                var dismissIcon = Icons.get('close');
                 var dismiss = h('div.cp-notification-dismiss', {
+                    tabindex: 0,
                     title: Messages.notifications_dismiss,
+                    'aria-label': Messages.notifications_dismiss,
+                    role: 'button'
                 }, dismissIcon);
                 $(dismiss).addClass("cp-clickable")
                     .on('click keypress', function (event) {
@@ -213,6 +234,45 @@ define([
             if (!history[data.type]) { history[data.type] = []; }
             history[data.type].push(data.content);
         };
+
+        const custom = AppConfig.customBroadcast;
+        if (Array.isArray(custom)) {
+            Common.onAccountOnline(metadataMgr => {
+                const priv = metadataMgr.getPrivateData();
+                const dismissed = priv.settings?.broadcast?.viewed || [];
+                custom.forEach(obj => {
+                    const viewed = dismissed.includes(obj.id);
+                    if (!obj.filter(metadataMgr)) { return; }
+                    if (viewed) { return; }
+                    const data = {
+                        type: 'broadcast',
+                        content: {
+                            hash: obj.id,
+                            markdown: true,
+                            dismiss: () => {
+                                let $notif = $(`.cp-notification[data-hash^="${obj.id}"]`);
+                                if ($notif.length) { $notif.remove(); }
+                                if (!dismissed.includes(obj.id)) {
+                                    dismissed.push(obj.id);
+                                }
+                                Common.setAttribute(['broadcast', 'viewed'],
+                                    dismissed);
+                                return true;
+                            },
+                            msg: {
+                                type: 'BROADCAST_CUSTOM',
+                                content: {
+                                    content: obj.msg
+                                }
+                            }
+                        }
+                    };
+                    mailbox.onMessage(data, () => {});
+                });
+            });
+        }
+
+
 
         mailbox.dismiss = function (data, cb) {
             var dataObj = {

@@ -12,6 +12,7 @@ define([
     '/common/common-hash.js',
     '/customize/messages.js',
     '/common/hyperscript.js',
+    '/common/common-icons.js',
 ], function(
     $,
     ApiConfig,
@@ -21,7 +22,8 @@ define([
     Util,
     Hash,
     Messages,
-    h
+    h,
+    Icons
 ) {
     const Sidebar = {};
     const keyToCamlCase = (key) => {
@@ -55,21 +57,10 @@ define([
             ]);
         };
 
-        blocks.icon = (icon) => {
-            let s = icon.split(' ');
-            let cls;
-            if (s.length > 1) {
-                cls = '.' + s.join('.');
-            } else {
-                let prefix = icon.slice(0, icon.indexOf('-'));
-                cls = `.${prefix}.${icon}`;
-            }
-            return h(`i${cls}`, { 'aria-hidden': 'true' });
-        };
         blocks.button = (type, icon, text) => {
             type = type || 'primary';
             return h(`button.btn.btn-${type}`, [
-                icon ? blocks.icon(icon) : undefined,
+                icon ? Icons.get(icon) : undefined,
                 h('span', text)
             ]);
         };
@@ -189,8 +180,7 @@ define([
             const table = h('table.cp-sidebar-table');
             if (header) {
                 const headerValues = header.map(value => {
-                    const lastWord = value.split(' ').pop(); // Extracting the last word
-                    return h('th', { class: lastWord.toLowerCase() }, value); // Modified to use the last word
+                    return h('th', value);
                 });
                 const headerRow = h('thead', h('tr', headerValues));
                 table.appendChild(headerRow);
@@ -380,15 +370,17 @@ define([
             Object.keys(categories).forEach(function (key, i) {
                 if (!active && !i) { active = key; }
                 var category = categories[key];
+                var name = category.name || Messages[`${app}_cat_${key}`] || key;
                 var icon;
-                if (category.icon) { icon = h('span', { class: category.icon }); }
+                if (category.icon) { icon = Icons.get(category.icon); }
                 var item = h('li.cp-sidebarlayout-category', {
                     'role': 'menuitem',
                     'tabindex': 0,
-                    'data-category': key
+                    'data-category': key,
+                    'aria-label': name
                 }, [
                     icon,
-                    category.name || Messages[`${app}_cat_${key}`] || key,
+                    h('span.cp-sidebarlayout-category-name', name),
                 ]);
                 var $item = $(item).appendTo(container);
                 Util.onClickEnter($item, function () {

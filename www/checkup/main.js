@@ -15,20 +15,20 @@ define([
     '/common/common-hash.js',
     '/common/common-util.js',
     '/common/pinpad.js',
-    '/common/outer/network-config.js',
+    '/common/network-config.js',
     '/common/outer/login-block.js',
     '/customize/pages.js',
     '/checkup/checkup-tools.js',
     '/customize/application_config.js',
     '/common/onlyoffice/current-version.js',
+    '/common/common-icons.js',
 
     '/components/tweetnacl/nacl-fast.min.js',
-    'css!/components/components-font-awesome/css/font-awesome.min.css',
     'less!/checkup/app-checkup.less',
 ], function ($, ApiConfig, Assertions, h, Messages, DomReady,
             nThen, SFCommonO, Login, Hash, Util, Pinpad,
             NetConfig, Block, Pages, Tools, AppConfig,
-            OOCurrentVersion) {
+            OOCurrentVersion, Icons) {
     window.CHECKUP_MAIN_LOADED = true;
 
     var Assert = Assertions();
@@ -82,7 +82,7 @@ define([
     var trimmedSafe = trimSlashes(ApiConfig.httpSafeOrigin);
     var trimmedUnsafe = trimSlashes(ApiConfig.httpUnsafeOrigin);
     var fileHost = ApiConfig.fileHost;
-    var accounts_api = ApiConfig.accounts_api || AppConfig.accounts_api || undefined;
+    var accounts_api = ApiConfig.accounts_api || undefined;
 
     var getAPIPlaceholderPath = function (relative) {
         var absolute;
@@ -111,15 +111,6 @@ define([
             httpApi.protocol = API_URL.protocol === 'wss:' ? 'https:' : 'http:';
             HTTP_API_URL = httpApi.origin;
         } catch (e) {}
-    }
-
-    var ACCOUNTS_URL;
-    try {
-        if (typeof(AppConfig.upgradeURL) === 'string') {
-            ACCOUNTS_URL = new URL(AppConfig.upgradeURL, trimmedUnsafe).origin;
-        }
-    } catch (err) {
-        console.error(err);
     }
 
     var debugOrigins = {
@@ -456,38 +447,6 @@ define([
             });
         });
     }
-
-    assert(function (cb, msg) {
-        setWarningClass(msg);
-
-        var printMessage = function (value) {
-            msg.appendChild(h('span', [
-                "This instance hasn't opted out of participation in Google's ",
-                code('FLoC'),
-                " targeted advertizing network. ",
-
-                "This can be done by setting a ",
-                code('permissions-policy'),
-                " HTTP header with a value of ",
-                code('"interest-cohort=()"'),
-                " in the configuration of its reverse proxy instead of the current value (",
-                code(value),
-                "). See the provided NGINX configuration file for an example. ",
-
-                h('p', [
-                    link("https://www.eff.org/deeplinks/2021/04/am-i-floced-launch", 'Learn more'),
-                ]),
-            ]));
-        };
-
-        Tools.common_xhr('/', function (xhr) {
-            var header = xhr.getResponseHeader('permissions-policy') || '';
-            var rules = header.split(',');
-            if (rules.includes('interest-cohort=()')) { return void cb(true); }
-            printMessage(JSON.stringify(header));
-            cb(header);
-        });
-    });
 
     assert(function (cb, msg) {
         msg.appendChild(h('span', [
@@ -1026,8 +985,7 @@ define([
                     (HTTP_API_URL && HTTP_API_URL !== $outer) ? HTTP_API_URL : undefined,
                     isHTTPS(fileHost)? fileHost: undefined,
                     // support for cryptpad.fr configuration
-                    accounts_api,
-                    ![trimmedUnsafe, trimmedSafe].includes(ACCOUNTS_URL)? ACCOUNTS_URL: undefined,
+                    accounts_api
                 ],
 
                 'img-src': ["'self'", 'data:', 'blob:', $outer],
@@ -1066,8 +1024,7 @@ define([
                     API_URL.origin,
                     (HTTP_API_URL && HTTP_API_URL !== $outer) ? HTTP_API_URL : undefined,
                     isHTTPS(fileHost)? fileHost: undefined,
-                    accounts_api,
-                    ![trimmedUnsafe, trimmedSafe].includes(ACCOUNTS_URL)? ACCOUNTS_URL: undefined,
+                    accounts_api
                 ],
                 'img-src': ["'self'", 'data:', 'blob:', $outer],
                 'media-src': ['blob:'],
@@ -1295,7 +1252,6 @@ define([
 
     // check if they provide legal data
     assert(function (cb, msg) {
-        // eslint-disable-next-line no-constant-condition
         if (true) { return void cb(true); } // FIXME stubbed while we determine whether this is necessary
         if (ApiConfig.restrictRegistration) { return void cb(true); }
 
@@ -1660,6 +1616,27 @@ define([
         });
     });
 
+    // confirm that POST requests to the `/upload-blob` endpoint
+    // return something other than a 404, which would probably indicate
+    // a reverse proxy misconfiguration
+    assert(function (cb, msg) {
+        msg.appendChild(h('span', [
+            `The server returned a 404 error when attempting to reach the `,
+            h('code', `/upload-blob`),
+            ` endpoint. This can be caused by an incorrectly configured reverse proxy.`,
+        ]));
+
+        fetch('/upload-blob', {
+            method: 'POST',
+        }).then(res => {
+            console.log({ upload_fetch_response: res });
+            cb(res.status !== 404);
+        }).catch(err => {
+            console.error(err);
+            cb(false);
+        });
+    });
+
     var row = function (cells) {
         return h('tr', cells.map(function (cell) {
             return h('td', cell);
@@ -1827,7 +1804,7 @@ define([
         $progress.html('').append(h('div.report.pending.summary', [
             versionStatement(),
             h('p', [
-                h('i.fa.fa-spinner.fa-pulse'),
+                Icons.get('loading'),
                 h('span', Messages._getKey('assert_numberOfTestsCompleted', [completed, total]))
             ])
         ]));

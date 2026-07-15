@@ -15,8 +15,9 @@ define([
     '/common/outer/local-store.js',
     '/customize/pages.js',
     '/common/pad-types.js',
-    '/common/extensions.js'
-], function ($, Config, h, Hash, Constants, Util, TextFit, Msg, AppConfig, LocalStore, Pages, PadTypes, Extensions) {
+    '/common/extensions.js',
+    '/common/common-icons.js'
+], function ($, Config, h, Hash, Constants, Util, TextFit, Msg, AppConfig, LocalStore, Pages, PadTypes, Extensions, Icons) {
     var urlArgs = Config.requireConf.urlArgs;
 
     var checkEarlyAccess = function (x) {
@@ -58,7 +59,6 @@ define([
                 var isEAEnabled = checkEarlyAccess(x[0]);
                 //if (i > 2) { s += '.cp-more.cp-hidden'; }
                 var icon = AppConfig.applicationsIcon[x[0]];
-                var font = icon.indexOf('cptools') === 0 ? 'cptools' : 'fa';
                 var href = '/'+ x[0] +'/';
                 var attr = isEnabled ? { href: href } : {
                     onclick: function () {
@@ -79,7 +79,7 @@ define([
                 return h('a.cp-index-appitem' + cls, [
                     attr,
                     h(s, [
-                        h('i.' + font + '.' + icon, {'aria-hidden': 'true'}),
+                        Icons.get(icon),
                         h('div.pad-button-text', [ x[1] ])
                     ])
                 ]);
@@ -142,27 +142,22 @@ define([
         var locationBlock;
         if (Pages.Instance.location) {
             locationBlock = h('div.cp-instance-location', [
-                h('i.fa.fa-map-pin', {'aria-hidden': 'true'}),
+                Icons.get('map-pin'),
                 Msg._getKey('home_location', [ Pages.Instance.location ]),
             ]);
         } else {
             locationBlock = h('div', h('br'));
         }
 
-        var subButton = function () {
-            if (Pages.areSubscriptionsAllowed() && !LocalStore.getPremium()) {
-                var sub = h('div.cp-sub-prompt', [
-                    h('span', Msg.home_morestorage),
-                    h('a', {href:"/accounts/", class:'subscribe-btn'},  [
-                        h('i.fa.fa-ticket'),
-                        Msg.features_f_subscribe
-                    ])
-                ]);
-                return sub;
-            } else {
-                return h('div');
-            }
-        };
+        let extraButtons = [];
+        // Messages.home_morestorage
+        // Messages.features_f_subscribe
+        Extensions.getExtensionsSync('HOMEPAGE_BUTTON').forEach(ext => {
+            if (!ext.getButton) { return; }
+            const b = ext.getButton();
+            if (!b) { return; }
+            extraButtons.push(b);
+        });
 
 
         let popup = h('div.cp-extensions-popups');
@@ -208,7 +203,7 @@ define([
                         h('div.cp-apps.col-lg-6', [
                             h('div.cp-app-grid', [
                                 h('span.cp-app-new', [
-                                    h('i.fa.fa-plus'),
+                                    Icons.get('add'),
                                     Msg.fm_newFile
                                 ]),
                                 h('div.cp-app-grid-apps', [
@@ -217,10 +212,10 @@ define([
                             ]),
                             h('div.cp-app-drive', [
                                 h('a.cp-drive-btn', {'href': '/drive/'}, [
-                                    h('i.fa.fa-hdd-o', {'aria-hidden': 'true'}),
+                                    Icons.get('drive'),
                                     Msg.team_cat_drive
                                 ]),
-                                subButton
+                                extraButtons
                             ])
                         ])
                     ]),

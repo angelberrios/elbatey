@@ -8,6 +8,7 @@ define([
     '/components/nthen/index.js',
     '/common/sframe-common.js',
     '/common/common-hash.js',
+    '/common/common-util.js',
     '/common/common-interface.js',
     '/common/common-ui-elements.js',
     '/customize/messages.js',
@@ -17,7 +18,6 @@ define([
     '/components/file-saver/FileSaver.min.js',
 
     'css!/components/bootstrap/dist/css/bootstrap.min.css',
-    'css!/components/components-font-awesome/css/font-awesome.min.css',
     'less!/file/app-file.less',
 
 ], function (
@@ -26,13 +26,13 @@ define([
     nThen,
     SFCommon,
     Hash,
+    Util,
     UI,
     UIElements,
     Messages,
     MediaTag)
 {
     var saveAs = window.saveAs;
-    var Nacl = window.nacl;
 
     var APP = window.APP = {};
 
@@ -81,12 +81,11 @@ define([
                 var hexFileName = secret.channel;
                 var src = fileHost + Hash.getBlobPathFromHex(hexFileName);
                 var key = secret.keys && secret.keys.cryptKey;
-                var cryptKey = Nacl.util.encodeBase64(key);
+                var cryptKey = Util.encodeBase64(key);
 
                 var $mt = $dlview.find('media-tag');
                 $mt.attr('src', src);
                 $mt.attr('data-crypto-key', 'cryptpad:'+cryptKey);
-                $mt.css('transform', 'scale(2)');
 
                 var rightsideDisplayed = false;
                 var metadataReceived = false;

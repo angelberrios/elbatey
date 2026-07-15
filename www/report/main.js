@@ -13,25 +13,24 @@ define([
     '/common/common-constants.js',
     '/common/cryptget.js',
     '/common/cryptpad-common.js',
-    '/common/outer/cache-store.js',
+    '/common/cache-store.js',
     '/common/common-interface.js',
     'chainpad-netflux',
     '/components/chainpad-crypto/crypto.js',
     '/common/user-object.js',
     '/common/clipboard.js',
     '/common/outer/login-block.js',
-    '/common/outer/roster.js',
+    //'/common/outer/roster.js',
     '/common/rpc.js',
     '/common/pinpad.js',
     '/common/outer/local-store.js',
 
 
     '/components/tweetnacl/nacl-fast.min.js',
-    'css!/components/components-font-awesome/css/font-awesome.min.css',
     'less!/customize/src/less2/pages/page-report.less',
 ], function ($, ApiConfig, h, Messages,
             nThen, Hash, Util, Constants, Crypt, Cryptpad, Cache, UI, CPNetflux,
-            Crypto, UserObject, Clipboard, Block, Roster, Rpc, Pinpad, LocalStore) {
+            Crypto, UserObject, Clipboard, Block, /*Roster,*/ Rpc, Pinpad, LocalStore) {
     var $report = $('#cp-report');
     var blockHash = localStorage.Block_hash;
     if (!blockHash) {
@@ -226,6 +225,7 @@ define([
 
 
                 // Repair roster mode
+                /*
                 if (!report) {
                     let roster = obj.keys.roster;
                     let rpc, anon_rpc;
@@ -269,7 +269,7 @@ define([
                         }));
                     }).nThen(next);
                     return;
-                }
+                }*/
 
                 // Check team drive
                 nThen(function (ww) {

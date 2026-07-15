@@ -14,14 +14,12 @@ define([
     '/common/outer/http-command.js',
     '/common/outer/local-store.js',
     '/common/outer/login-block.js',
+    '/customize/login.js',
     '/customize/messages.js',
-
-    '/components/tweetnacl/nacl-fast.min.js',
+    '/common/common-icons.js',
 ], function (ApiConfig, $, h, Util, Cred, UI, Login, Constants,
-        ServerCommand, LocalStore, Block, Messages) {
+        ServerCommand, LocalStore, Block, CLogin, Messages, Icons) {
     if (window.top !== window) { return; }
-
-    let Nacl = window.nacl;
 
     let ssoAuthCb = function (cb) {
         var b64Keys = Util.tryParse(localStorage.CP_sso_auth);
@@ -30,10 +28,11 @@ define([
             return;
         }
         var keys = {
-            secretKey: Nacl.util.decodeBase64(b64Keys.s),
-            publicKey: Nacl.util.decodeBase64(b64Keys.p)
+            secretKey: Util.decodeBase64(b64Keys.s),
+            publicKey: Util.decodeBase64(b64Keys.p)
         };
         var inviteToken = b64Keys.token;
+        CLogin.ssoRedirectTo(b64Keys);
         ServerCommand(keys, {
             command: 'SSO_AUTH_CB',
             url: window.location.href
@@ -66,7 +65,7 @@ define([
                 return void UI.warn(msg);
             }
             LocalStore.setSSOSeed(seed.toLowerCase());
-            window.location.href = '/drive/';
+            CLogin.redirect();
         });
     };
 
@@ -154,7 +153,7 @@ define([
                 if (data.register) {
                     var span = h('span', [
                         h('h2', [
-                            h('i.fa.fa-warning'),
+                            Icons.get('alert'),
                             ' ',
                             Messages.register_warning,
                         ]),

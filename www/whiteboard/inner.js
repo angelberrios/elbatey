@@ -18,6 +18,7 @@ define([
     '/customize/application_config.js',
     '/components/chainpad/chainpad.dist.js',
     '/common/common-ui-elements.js',
+    '/common/common-icons.js',
 
     '/lib/fabric.min.js',
     'less!/whiteboard/app-whiteboard.less'
@@ -36,7 +37,8 @@ define([
     Colors,
     AppConfig,
     ChainPad,
-    UIElements)
+    UIElements,
+    Icons)
 {
 
     var APP = window.APP = {
@@ -311,6 +313,8 @@ define([
         var $canvas = $('canvas');
         var $canvasContainer = $('canvas').parents('.cp-app-whiteboard-canvas-container');
         var $container = $('#cp-app-whiteboard-container');
+        $('#cp-app-whiteboard-canvas-area').show();
+        $('#cp-app-whiteboard-controls').show();
 
         // Max for old macs: 2048×1464
         // Max for IE: 8192x8192
@@ -452,7 +456,7 @@ define([
                 title: Messages.canvas_imageEmbed,
                 text: Messages.toolbar_insert,
                 drawer: false,
-                icon: 'fa-picture-o',
+                icon: 'file-image',
                 name: 'mediatag'
             }).click(function () {
                 $('<input>', {type:'file'}).on('change', onUpload).click();
@@ -551,22 +555,22 @@ define([
                     display: 'block',
                 }
             }, [
-                h('button#cp-app-whiteboard-clear.btn.btn-danger', Messages.canvas_clear), ' ',
+                h('button#cp-app-whiteboard-clear.btn.btn-danger', [Icons.get ('clear-canvas'), Messages.canvas_clear]), ' ',
                 h('div.cp-whiteboard-type', [
-                    h('button.btn.brush.fa.fa-paint-brush.btn-primary', {title: Messages.canvas_brush}),
-                    h('button.btn.move.fa.fa-arrows', {title: Messages.canvas_select}),
+                    h('button.btn.brush.btn-primary', {title: Messages.canvas_brush}, Icons.get('customize')),
+                    h('button.btn.move', {title: Messages.canvas_select}, Icons.get('select')),
                 ]),
                 h('div.cp-whiteboard-history', [
-                    h('button.btn.undo.fa.fa-undo', {title: Messages.undo}),
-                    h('button.btn.redo.fa.fa-repeat', {title: Messages.redo}),
+                    h('button.btn.undo', {title: Messages.undo}, Icons.get('undo')),
+                    h('button.btn.redo', {title: Messages.redo}, Icons.get('redo')),
                 ]),
                 h('div.cp-whiteboard-text', [
-                    h('button.btn.fa.fa-font')
+                    h('button.btn', Icons.get('type')),
                 ]),
-                h('button.btn.fa.fa-trash#cp-app-whiteboard-delete', {
+                h('button.btn#cp-app-whiteboard-delete', {
                     disabled: 'disabled',
                     title: Messages.canvas_delete
-                }),
+                }, Icons.get('trash-full')),
                 /*
                 h('button#cp-app-whiteboard-toggledraw.btn.btn-secondary', Messages.canvas_disable),
                 h('button#cp-app-whiteboard-toggledraw.btn.btn-secondary', Messages.canvas_disable),
@@ -631,6 +635,8 @@ define([
         }).nThen(function (waitFor) {
             require(['/lib/fabric-history.min.js'], waitFor());
 
+            $('#cp-app-whiteboard-canvas-area').css('display', 'none');
+            $('#cp-app-whiteboard-controls').css('display', 'none');
             // Framework initialization
             Framework.create({
                 patchTransformer: ChainPad.NaiveJSONTransformer,

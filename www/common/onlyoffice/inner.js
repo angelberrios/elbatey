@@ -15,8 +15,9 @@ define([
     '/common/common-feedback.js',
     '/common/hyperscript.js',
     '/api/config',
-    '/customize/messages.js',
     '/customize/application_config.js',
+    '/customize/messages.js',
+    '/support/ui.js',
     '/components/chainpad/chainpad.dist.js',
     '/file/file-crypto.js',
     '/common/onlyoffice/history.js',
@@ -24,12 +25,13 @@ define([
     '/common/onlyoffice/oodoc_base.js',
     '/common/onlyoffice/ooslide_base.js',
     '/common/outer/worker-channel.js',
-    '/common/outer/x2t.js',
 
+    '/common/onlyoffice/current-version.js',
+    '/common/onlyoffice/broken-formats.js',
+    '/common/common-icons.js',
     '/components/file-saver/FileSaver.min.js',
 
     'css!/components/bootstrap/dist/css/bootstrap.min.css',
-    'less!/components/components-font-awesome/css/font-awesome.min.css',
     'less!/common/onlyoffice/app-oo.less',
 ], function (
     $,
@@ -44,8 +46,9 @@ define([
     Feedback,
     h,
     ApiConfig,
-    Messages,
     AppConfig,
+    Messages,
+    Support,
     ChainPad,
     FileCrypto,
     History,
@@ -53,7 +56,9 @@ define([
     EmptyDoc,
     EmptySlide,
     Channel,
-    X2T)
+    OOCurrentVersion,
+    BrokenFormats,
+    Icons)
 {
     var saveAs = window.saveAs;
     var Nacl = window.nacl;
@@ -65,12 +70,9 @@ define([
     var CHECKPOINT_INTERVAL = 100;
     var FORCE_CHECKPOINT_INTERVAL = 10000;
     var DISPLAY_RESTORE_BUTTON = false;
-    var NEW_VERSION = 7; // version of the .bin, patches and ChainPad formats
     var PENDING_TIMEOUT = 30000;
-    var CURRENT_VERSION = X2T.CURRENT_VERSION;
     const HISTORY_KEEPER_INDEX_USER = 1;
     const READ_ONLY_INDEX_USER = 2;
-
     //var READONLY_REFRESH_TO = 15000;
 
     var debug = function (x, type) {
@@ -100,20 +102,20 @@ define([
             hashes: {},
             ids: {},
             mediasSources: {},
-            version: privateData.ooForceVersion ? Number(privateData.ooForceVersion) : NEW_VERSION
+            version: privateData.ooForceVersion ? Number(privateData.ooForceVersion) : OOCurrentVersion.currentVersionNumber
         };
         var oldHashes = {};
         var oldIds = {};
         var oldLocks = {};
         var myUniqueOOId;
         var myOOId;
-        var sessionId = Hash.createChannelId();
+        let myIndex;
         var cpNfInner;
         let integrationChannel;
 
         var evOnPatch = Util.mkEvent();
         var evOnSync = Util.mkEvent();
-        var evIntegrationSave = Util.mkEvent();
+        const evIntegrationSave = Util.mkEvent();
 
         // This structure is used for caching media data and blob urls for each media cryptpad url
         var mediasData = {};
@@ -206,7 +208,9 @@ define([
             }
 
             const myId = getId();
-            const myIndex = getNextUserIndex();
+            if (!myIndex) {
+                myIndex = getNextUserIndex();
+            }
 
             ids[myId] = {
                 ooid: myOOId,
@@ -300,6 +304,21 @@ define([
             var last = JSON.parse(JSON.stringify(hashes[lastIndex]));
             return last;
         };
+        var deleteLastCp = function (i) {
+            var hashes = content.hashes;
+            if (!hashes || !Object.keys(hashes).length) { return {}; }
+            i = i || 0;
+            var idx = sortCpIndex(hashes);
+            var lastIndex = idx[idx.length - 1 - i];
+            if (typeof(lastIndex) === "undefined" || !hashes[lastIndex]) {
+                return;
+            }
+            delete hashes[lastIndex];
+            APP.onLocal();
+            APP.realtime.onSettle(function () {
+                UI.log(Messages.saved);
+            });
+        };
 
         var rtChannel = {
             ready: false,
@@ -341,8 +360,23 @@ define([
             cpIndex: 0
         };
 
-        var getContent = function () {
+        const fixProps = (title) => {
             try {
+                const props = getEditor().asc_getCoreProps();
+                if (!props) { return; }
+                props.title = title;
+                if (!content.hashes || !Object.keys(content.hashes).length) {
+                    // No CP: document is using our templates
+                    // --> fix the "creator" field
+                    props.creator = "";
+                }
+                getEditor().asc_setCoreProps(props);
+            } catch {}
+        };
+        var getContent = function (title) {
+            try {
+                // Update document metadata with latest title
+                fixProps(title);
                 return getEditor().asc_nativeGetFile();
             } catch (e) {
                 console.error(e);
@@ -392,7 +426,7 @@ define([
         // Add a lock
         var isLockedModal = {
             content: UI.dialog.customModal(h('div.cp-oo-x2tXls', [
-                h('span.fa.fa-spin.fa-spinner'),
+                Icons.get('loading'),
                 h('span', Messages.oo_isLocked)
             ]))
         };
@@ -412,9 +446,9 @@ define([
                 _content.hashes[1] = {
                     file: data.url,
                     index: 0,
-                    version: NEW_VERSION
+                    version: OOCurrentVersion.currentVersionNumber
                 };
-                _content.version = NEW_VERSION;
+                _content.version = OOCurrentVersion.currentVersionNumber;
                 _content.channel = Hash.createChannelId();
                 _content.ids = {};
                 sframeChan.query('Q_SAVE_AS_TEMPLATE', {
@@ -468,7 +502,7 @@ define([
                 file: data.url,
                 hash: ev.hash,
                 index: ev.index,
-                version: NEW_VERSION
+                version: OOCurrentVersion.currentVersionNumber
             };
             oldHashes = JSON.parse(JSON.stringify(content.hashes));
             content.locks = {};
@@ -476,7 +510,7 @@ define([
             // If this is a migration, set the new version
             if (APP.migrate) {
                 delete content.migration;
-                content.version = NEW_VERSION;
+                content.version = OOCurrentVersion.currentVersionNumber;
             }
             APP.onLocal();
             APP.realtime.onSettle(function () {
@@ -531,20 +565,9 @@ define([
                 isLockedModal.modal = UI.openCustomModal(isLockedModal.content);
             }
             myUniqueOOId = undefined;
+            myIndex = undefined;
             setMyId();
-            var editor = getEditor();
-            if (editor) {
-                var app = common.getMetadataMgr().getPrivateData().ooType;
-                var d;
-                if (app === 'doc') {
-                    d = editor.GetDocument().Document;
-                } else if (app === 'presentation') {
-                    d = editor.GetPresentation().Presentation;
-                }
-                if (d) {
-                    APP.oldCursor = d.GetSelectionState();
-                }
-            }
+            
             if (APP.docEditor) { APP.docEditor.destroyEditor(); } // Kill the old editor
             $('iframe[name="frameEditor"]').after(h('div#cp-app-oo-placeholder-a')).remove();
             ooLoaded = false;
@@ -576,7 +599,8 @@ define([
             blob.name = title || (metadataMgr.getMetadataLazy().title || file.doc) + '.' + file.type;
             var data = {
                 hash: (APP.history || APP.template) ? ooChannel.historyLastHash : ooChannel.lastHash,
-                index: (APP.history || APP.template) ? ooChannel.currentIndex : ooChannel.cpIndex
+                index: (APP.history || APP.template) ? ooChannel.currentIndex : ooChannel.cpIndex,
+                time: new Date()
             };
             fixSheets();
 
@@ -634,20 +658,6 @@ define([
                     saveToServer();
                 });
             }
-        };
-        var deleteLastCp = function () {
-            var hashes = content.hashes;
-            if (!hashes || !Object.keys(hashes).length) { return; }
-            var i = 0;
-            var idx = Object.keys(hashes).map(Number).sort(function (a, b) {
-                return a-b;
-            });
-            var lastIndex = idx[idx.length - 1 - i];
-            delete content.hashes[lastIndex];
-            APP.onLocal();
-            APP.realtime.onSettle(function () {
-                UI.log(Messages.saved);
-            });
         };
         var restoreLastCp = function () {
             content.saveLock = myOOId;
@@ -716,7 +726,7 @@ define([
                 if (window.sendCredentials) { xhr.withCredentials = true; }
                 xhr.responseType = 'arraybuffer';
                 xhr.onload = function () {
-                    if (/^4/.test('' + this.status)) {
+                    if (/^[45]/.test('' + this.status)) {
                         reject(this.status);
                         return void console.error('XHR error', this.status);
                     }
@@ -725,7 +735,8 @@ define([
                         var u8 = new Uint8Array(arrayBuffer);
                         FileCrypto.decrypt(u8, key, function (err, decrypted) {
                             if (err) {
-                                if (err === "DECRYPTION_ERROR") {
+                                if (err === "DECRYPTION_ERROR" ||
+                                err === "E_METADATA_DECRYPTION") {
                                     console.warn(err);
                                     return void reject(err);
                                 }
@@ -747,7 +758,7 @@ define([
         var refreshReadOnly = function () {
             var cancel = h('button.cp-corner-cancel', Messages.cancel);
             var reload = h('button.cp-corner-primary', [
-                h('i.fa.fa-refresh'),
+                Icons.get('refresh'),
                 Messages.oo_refresh
             ]);
 
@@ -781,6 +792,7 @@ define([
                 return hashes[a].index - hashes[b].index;
             });
             var s = version.split('.');
+            var v = parseInt(s[1]);
             if (s.length !== 2) { return UI.errorLoadingScreen(Messages.error); }
 
             var major = Number(s[0]);
@@ -808,8 +820,7 @@ define([
 
                 // The first "cp" in history is the empty doc. It doesn't include the first patch
                 // of the history
-                var initialCp = major === 0 || !cp.hash;
-                var messages = (data.messages || []).slice(initialCp ? 0 : 1, minor);
+                var messages = data.messages;
 
                 messages.forEach(function (obj) {
                     try { obj.msg = JSON.parse(obj.msg); } catch (e) { console.error(e); }
@@ -842,7 +853,7 @@ define([
 
                 loadLastDocument(cp)
                     .then(({blob, fileType}) => {
-                        ooChannel.queue = messages;
+                        ooChannel.queue = messages.slice(1, minor+1);
                         resetData(blob, fileType);
                         UI.removeLoadingScreen();
                     })
@@ -858,11 +869,84 @@ define([
                         var type = common.getMetadataMgr().getPrivateData().ooType;
                         if (APP.downloadType) { type = APP.downloadType; }
                         var blob = loadInitDocument(type, true);
-                        ooChannel.queue = messages;
+                        ooChannel.queue = file.doc === 'spreadsheet' ? messages.slice(0, v) : messages.slice(0, v+1);
                         resetData(blob, file);
                         UI.removeLoadingScreen();
                     });
             });
+        };
+
+        const sendDebugSupportTicket = (message) => {
+            const title = "[Automatic] Office document locked";
+
+            APP.supportModule.execCommand('MAKE_TICKET', {
+                channel: Hash.createChannelId(),
+                title,
+                ticket: APP.support.getDebuggingData({
+                    title,
+                    message
+                })
+            }, () => {});
+        };
+        const onRtChannelError = (err) => {
+            const wasReadOnly = readOnly;
+            readOnly = true;
+            offline = true;
+
+            const message = JSON.stringify({
+                error: err?.error,
+                reason: err?.reason,
+                channel: privateData.channel,
+                rtChannel: content.channel
+            }, 0, 2);
+
+            let txt = Messages.oo_rtChannelMissing;
+            let value;
+            let f = UI.confirm;
+            let cb = (yes) => {
+                if (!yes) { return; }
+
+                // Set flag if support has already been contacted
+                content.missingRtChannel = +new Date();
+                readOnly = wasReadOnly;
+                APP.onLocal();
+                readOnly = true;
+
+                sendDebugSupportTicket(message);
+            };
+
+            let btnText = content.missingRtChannel ? Messages.sent : Messages.support_formButton;
+            let opts = {
+                ok: [
+                    Icons.get('send'),
+                    h('span', btnText)
+                ],
+                cancel: Messages.filePicker_close
+            };
+
+            if (content.missingRtChannel) {
+                value = h('strong', Messages._getKey('oo_rtChannelMissingDate', [
+                    new Date(content.missingRtChannel).toLocaleDateString()
+                ]));
+                setTimeout(() => {
+                    const $b = UI.findOKButton();
+                    $b.attr('disabled', 'disabled');
+                });
+            }
+
+            if (!ApiConfig.supportMailboxKey) {
+                txt = Messages.oo_rtChannelMissingNoSupport;
+                value = UI.getPreCopy(message);
+                f = UI.alert;
+                opts = undefined;
+                cb = undefined;
+            }
+
+            let div = h('div', [
+                h('p', txt),
+                value
+            ]);
+            f(div, cb, opts);
         };
 
         var openRtChannel = function (cb) {
@@ -884,6 +968,10 @@ define([
             });
             sframeChan.on('EV_OO_EVENT', function (obj) {
                 switch (obj.ev) {
+                    case 'ERROR':
+                        onRtChannelError(obj.data);
+                        cb();
+                        break;
                     case 'READY':
                         checkClients(obj.data);
                         cb();
@@ -913,6 +1001,7 @@ define([
                             ooChannel.send(obj.data.msg);
                             ooChannel.lastHash = obj.data.hash;
                             ooChannel.cpIndex++;
+                            common.notify();
                         } else {
                             ooChannel.queue.push(obj.data);
                         }
@@ -1073,6 +1162,29 @@ define([
             }
         };
 
+        const getInitialChanges = function() {
+            const changes = [];
+            if (content.version > 2) {
+                ooChannel.queue.forEach(function (data) {
+                    Array.prototype.push.apply(changes, data.msg.changes);
+                });
+                ooChannel.ready = true;
+
+                ooChannel.cpIndex += ooChannel.queue.length;
+                var last = ooChannel.queue.pop();
+                if (last) { ooChannel.lastHash = last.hash; }
+            }
+            return changes;
+        };
+
+        const onAuth = function () {
+            if (content.version <= 2) {
+                setEditable(false, true);
+            }
+            console.log("OO loading");
+        };
+
+
         var handleAuth = function (obj, send) {
             //setEditable(false);
 
@@ -1099,7 +1211,7 @@ define([
             send({
                 type: "auth",
                 result: 1,
-                sessionId: sessionId,
+                sessionId: "sessionId",
                 participants: p.list,
                 locks: [],
                 changes: [],
@@ -1136,7 +1248,7 @@ define([
             });
             */
         };
-
+        
         var handleLock = function (obj, send) {
             if (APP.history) { return; }
 
@@ -1406,6 +1518,207 @@ define([
             });
         };
 
+        const send = ooChannel.send = function (obj, force) {
+            // can't push to OO before reloading cp
+            if (APP.onStrictSaveChanges && !force) { return; }
+            // We only need to release locks for sheets
+            const type = common.getMetadataMgr().getPrivateData().ooType;
+            if (type !== "sheet" && obj.type === "releaseLock") { return; }
+            if (type === "presentation" && obj.type === "cp_theme") {
+                console.error(obj);
+                return;
+            }
+
+            debug(obj, 'toOOClient');
+            APP.docEditor.sendMessageToOO(obj);
+            if (obj && obj.type === "saveChanges") {
+                evIntegrationSave.fire();
+            }
+        };
+
+        const fromOOHandler = function (obj) {
+            debug(obj, 'fromOOClient');
+            switch (obj.type) {
+                case "auth":
+                    // Handled by onlyoffice-editor now
+                    break;
+                case "isSaveLock":
+                    // TODO ping the server to check if we're online first?
+                    if (!offline) {
+                        if (APP.waitLock) {
+                            APP.waitLock.reg(function () {
+                                send({
+                                    type: "saveLock",
+                                    saveLock: false
+                                }, true);
+                            });
+                        } else {
+                            send({
+                                type: "saveLock",
+                                saveLock: false
+                            }, true);
+                        }
+                    }
+                    break;
+                case "cursor":
+                    if (cursor && cursor.updateCursor) {
+                        cursor.updateCursor({
+                            type: "cursor",
+                            messages: [{
+                                cursor: obj.cursor,
+                                time: +new Date(),
+                                user: myUniqueOOId,
+                                useridoriginal: myOOId
+                            }]
+                        });
+                    }
+                    break;
+                case "forceSaveStart":
+                    if (APP.integrationSave) {
+                        APP.integrationSave(obj => {
+                            if (obj?.error) {
+                                console.error(obj.error);
+                                return void UI.warn(Messages.error);
+                            }
+                            content.integrationSave = `${myUniqueOOId}-${+new Date()}`;
+                            APP.integrationSaved = content.integrationSave;
+                            APP.onLocal();
+                            UI.log(Messages.saved);
+                        });
+                    }
+                    break;
+                case "getLock":
+                    handleLock(obj, send);
+                    break;
+                case "getMessages":
+                    // OO chat messages?
+                    send({ type: "message" });
+                    break;
+                case "saveChanges":
+                    // If we have unsaved data before reloading for a checkpoint...
+                    if (APP.onStrictSaveChanges) {
+                        const type = common.getMetadataMgr().getPrivateData().ooType;
+                        delete APP.unsavedLocks;
+                        APP.unsavedChanges = {
+                            type: "saveChanges",
+                            changes: parseChanges(obj.changes),
+                            changesIndex: ooChannel.cpIndex || 0,
+                            locks: type === "sheet" ? [] : APP.unsavedLocks,
+                            excelAdditionalInfo: null,
+                            recover: true
+                        };
+                        APP.onStrictSaveChanges();
+                        return;
+                    }
+                    var AscCommon = window.frames[0] && window.frames[0].AscCommon;
+                    if (Util.find(AscCommon, ['CollaborativeEditing','m_bFast'])
+                                && APP.themeLocked) {
+                        obj = APP.themeLocked;
+                        APP.themeLocked = undefined;
+                        obj.type = "cp_theme";
+                        console.error(obj);
+                    }
+                    if (APP.themeRemote) {
+                        delete APP.themeRemote;
+                        send({
+                            type: "unSaveLock",
+                            index: ooChannel.cpIndex,
+                            time: +new Date()
+                        });
+                        return;
+                    }
+
+                    // We're sending our changes to netflux
+                    handleChanges(obj, send);
+                    // If we're alone, clean up the medias
+                    var m = metadataMgr.getChannelMembers().slice().filter(function (nId) {
+                        return nId.length === 32;
+                    });
+                    if (m.length === 1 && APP.loadingImage <= 0) {
+                        try {
+                            // "docs" contains the correct images that we've just uploaded
+                            // "docs2" contains the correct images from the .bin checkpoint
+                            // both of them are not reliable in the other case
+                            var docs = getWindow().AscCommon.g_oDocumentUrls.urls;
+                            var docs2 = getEditor().ImageLoader.map_image_index;
+                            var mediasSources = getMediasSources();
+                            Object.keys(mediasSources).forEach(function (name) {
+                                if (!docs && !docs2) { return; }
+                                if (!docs['media/'+name] && !docs2[name]) {
+                                    delete mediasSources[name];
+                                }
+                            });
+                            APP.onLocal();
+                        } catch (e) {}
+                    }
+                    break;
+                case "unLockDocument":
+                    if (obj.releaseLocks && content.locks && content.locks[getId()]) {
+                        send({
+                            type: "releaseLock",
+                            locks: getUserLock(getId())
+                        });
+                        delete content.locks[getId()];
+                        APP.onLocal();
+                    }
+                    if (obj.isSave) {
+                        send({
+                            type: "unSaveLock",
+                            time: -1,
+                            index: -1
+                        });
+                    }
+                    if (APP.onDocumentUnlock) {
+                        APP.onDocumentUnlock();
+                        APP.onDocumentUnlock = undefined;
+                    }
+                    break;
+                case 'openDocument':
+                    // When duplicating a slide, OO may ask the URLs of the images
+                    // in that slide
+                    var _obj = obj.message;
+                    if (_obj.c === "imgurls") {
+                        var _mediasSources = getMediasSources();
+                        var images = _obj.data || [];
+                        if (!Array.isArray(images)) { return; }
+                        var urls = [];
+                        nThen(function (waitFor) {
+                            images.forEach(function (name) {
+                                if (/^data\:image/.test(name)) {
+                                    Util.fetch(name, waitFor(function (err, u8) {
+                                        if (err) { return; }
+                                        var b = new Blob([u8]);
+                                        urls.push(URL.createObjectURL(b));
+                                    }));
+                                    return;
+                                }
+                                var data = _mediasSources[name];
+                                if (!data) { return; }
+                                var media = mediasData[data.src];
+                                if (!media) { return; }
+                                urls.push({
+                                    path: name,
+                                    url: media.blobUrl,
+                                });
+                            });
+                        }).nThen(function () {
+                            send({
+                                type: "documentOpen",
+                                data: {
+                                    type: "imgurls",
+                                    status: "ok",
+                                    data: {
+                                        urls: urls,
+                                        error: 0
+                                    }
+                                }
+                            });
+                        });
+                    }
+                    break;
+            }
+        };
+
 
         var makeChannel = function () {
             var msgEv = Util.mkEvent();
@@ -1626,6 +1939,7 @@ define([
             });
         };
 
+        
         var x2tConvertData = function (data, fileName, format, cb) {
             var sframeChan = common.getSframeChannel();
             var editor = getEditor();
@@ -1668,8 +1982,11 @@ define([
                 mediasData: mediasData
             }, function (err, obj) {
                 if (err || !obj || !obj.data) {
-                    UI.warn(Messages.error);
-                    return void cb();
+                    if (integrationChannel) {
+                        integrationChannel.event('EV_INTEGRATION_ERROR', 'X2T_ERROR');
+                    }
+                    UI.alert(Messages.oo_couldNotConvertDocument, cb);
+                    return;
                 }
                 cb(obj.data, obj.images);
             }, {
@@ -1681,22 +1998,233 @@ define([
         // to be downloaded and decrypted before converting to xlsx
         var downloadImages = {};
 
-        var firstOO = true;
-        startOO = function (blob, file, force) {
-            if (APP.ooconfig && !force) { return void console.error('already started'); }
-            var url = URL.createObjectURL(blob);
-            var lock = !APP.history && (APP.migrate);
+        const onAppReady = function() {
+            APP.docEditor.getIframe().setAttribute('tabindex', '-1');
+            var css = // Old OO
+                        //'#id-toolbar-full .toolbar-group:nth-child(2), #id-toolbar-full .separator:nth-child(3) { display: none; }' +
+                        //'#fm-btn-save { display: none !important; }' +
+                        //'#panel-settings-general tr.autosave { display: none !important; }' +
+                        //'#panel-settings-general tr.coauth { display: none !important; }' +
+                        //'#header { display: none !important; }' +
+                        '#title-doc-name { display: none !important; }' +
+                        '#title-user-name { display: none !important; }' +
+    (supportsXLSX() ? '' : '#slot-btn-dt-print { display: none !important; }') +
+                        // New OO:
+                        'section[data-tab="ins"] .separator:nth-last-child(2) { display: none !important; }' + // separator
+                        '#slot-btn-insequation { display: none !important; }' + // Insert equation
+                        //'#asc-gen125 { display: none !important; }' + // Disable presenter mode
+                        //'.toolbar .tabs .ribtab:not(.canedit) { display: none !important; }' + // Switch collaborative mode
+                        '#fm-btn-info { display: none !important; }' + // Author name, doc title, etc. in "File" (menu entry)
+                        '#panel-info { display: none !important; }' + // Same but content
+                        '#image-button-from-url { display: none !important; }' + // Inline image settings: replace with url
+                        '.cp-from-url, #textart-button-from-url { display: none !important; }' + // Spellcheck language
+                        '.statusbar .cnt-lang { display: none !important; }' + // Spellcheck language
+                        '.statusbar #btn-doc-spell { display: none !important; }' + // Spellcheck button
+                        '#file-menu-panel .devider { display: none !important; }' + // separator in the "File" menu
+                        '#left-btn-spellcheck, #left-btn-about { display: none !important; }'+
+                        'div.btn-users.dropdown-toggle { display: none; !important }';
+            if (readOnly) {
+                css += '#toolbar { display: none !important; }';
+                //css += '#app-title { display: none !important; }'; // OnlyOffice logo + doc title
+                //css += '#file-menu-panel { top: 28px !important; }'; // Position of the "File" menu
+            }
+            APP.docEditor.injectCSS(css);
+            setTimeout(function () {
+                $(window).trigger('resize');
+            });
+            if (UI.findOKButton().length) {
+                UI.findOKButton().on('focusout', function () {
+                    window.setTimeout(function () { UI.findOKButton().focus(); });
+                });
+            }
+        };
 
-            var fromContent = metadataMgr.getPrivateData().fromContent;
-            if (!firstOO) { fromContent = undefined; }
-            firstOO = false;
+        const onError = function() {
+            console.error(arguments);
+            if (integrationChannel) {
+                integrationChannel.event('EV_INTEGRATION_ERROR', 'DOCUMENT_ERROR');
+            }
+            if (APP.isDownload) {
+                var sframeChan = common.getSframeChannel();
+                sframeChan.event('EV_OOIFRAME_DONE', '');
+            }
+        };
 
-            // Starting from version 3, we can use the view mode again
-            // defined but never used
-            //var mode = (content && content.version > 2 && lock) ? "view" : "edit";
+        const onDocumentReady = function(lock, lang, fromContent, file, force) {
+            evOnSync.fire();
+            var onMigrateRdy = Util.mkEvent();
+            onMigrateRdy.reg(function () {
+                var div = h('div.cp-oo-x2tXls', [
+                    Icons.get('loading'),
+                    h('span', Messages.oo_sheetMigration_loading)
+                ]);
+                APP.migrateModal = UI.openCustomModal(UI.dialog.customModal(div, {buttons: []}));
+                makeCheckpoint(true);
+            });
+            // DEPRECATED: from version 3, the queue is sent again during init
+            if (APP.migrate && ((content.version || 1) <= 2)) {
+                // The doc is ready, fix the worksheets IDs and push the queue
+                fixSheets();
+                // Push changes since last cp
+                ooChannel.ready = true;
+                var changes = [];
+                var changesIndex;
+                ooChannel.queue.forEach(function (data) {
+                    Array.prototype.push.apply(changes, data.msg.changes);
+                    changesIndex = data.msg.changesIndex;
+                    //ooChannel.send(data.msg);
+                });
+                ooChannel.cpIndex += ooChannel.queue.length;
+                var last = ooChannel.queue.pop();
+                if (last) { ooChannel.lastHash = last.hash; }
 
-            var lang = (window.cryptpadLanguage || navigator.language || navigator.userLanguage || '').slice(0,2);
+                var onDocUnlock = function () {
+                    // Migration required but read-only: continue...
+                    if (readOnly) {
+                        setEditable(true);
+                        try { getEditor().asc_setRestriction(true); } catch (e) {}
+                    } else {
+                        // No changes after the cp: migrate now
+                        onMigrateRdy.fire();
+                    }
+                };
 
+                // Send the changes all at once
+                if (changes.length) {
+                    setTimeout(function () {
+                        ooChannel.send({
+                            type: 'saveChanges',
+                            changesIndex: changesIndex,
+                            changes: changes,
+                            locks: []
+                        });
+                        APP.onDocumentUnlock = onDocUnlock;
+                    }, 5000);
+                    return;
+                }
+                onDocUnlock();
+                return;
+            }
+
+            if (lock || readOnly) {
+                try { getEditor().asc_setRestriction(true); } catch (e) {}
+                //getEditor().setViewModeDisconnect(); // can't be used anymore, display an OO error popup
+            } else {
+                setEditable(true);
+                delete content.missingRtChannel;
+                APP.onLocal();
+                deleteOfflineLocks();
+                handleNewLocks({}, content.locks);
+                if (APP.unsavedChanges) {
+                    var unsaved = APP.unsavedChanges;
+                    delete APP.unsavedChanges;
+                    rtChannel.sendMsg(unsaved, null, function (err, hash) {
+                        if (err) { return void UI.alert(Messages.oo_lostEdits); }
+                        // This is supposed to be a "send" function to tell our OO
+                        // to unlock the cell. We use this to know that the patch was
+                        // correctly sent so that we can apply it to our OO too.
+                        ooChannel.send(unsaved);
+                        ooChannel.cpIndex++;
+                        ooChannel.lastHash = hash;
+                    });
+                }
+
+                if (APP.startNew) {
+                    var w = getWindow();
+                    if (lang === "fr") { lang = 'fr-fr'; }
+                    var l = w.Common.util.LanguageInfo.getLocalLanguageCode(lang);
+                    getEditor().asc_setDefaultLanguage(l);
+                }
+            }
+            if (integrationChannel) {
+                integrationChannel.event('EV_INTEGRATION_READY');
+            }
+            delete APP.startNew;
+
+            if (fromContent && !lock && Array.isArray(fromContent.content)) {
+                makePatch(fromContent.content);
+            }
+
+            if (APP.isDownload) {
+                delete APP.isDownload;
+                var bin = getContent();
+                if (!supportsXLSX()) {
+                    return void sframeChan.event('EV_OOIFRAME_DONE', bin, {raw: true});
+                }
+                nThen(function (waitFor) {
+                    // wait for all the images to be loaded before converting
+                    Object.keys(downloadImages).forEach(function (name) {
+                        downloadImages[name].reg(waitFor());
+                    });
+                }).nThen(function () {
+                    x2tConvertData(bin, 'filename.bin', file.type, function (xlsData) {
+                        sframeChan.event('EV_OOIFRAME_DONE', xlsData, {raw: true});
+                    });
+                });
+                return;
+            }
+
+
+            if (isLockedModal.modal && force) {
+                isLockedModal.modal.closeModal();
+                delete isLockedModal.modal;
+                if (!APP.history) {
+                    $('#cp-app-oo-editor > iframe')[0].contentWindow.focus();
+                }
+            }
+
+            if (APP.template) {
+                try { getEditor().asc_setRestriction(true); } catch (e) {}
+                //getEditor().setViewModeDisconnect();
+                UI.removeLoadingScreen();
+                makeCheckpoint(true);
+                return;
+            }
+
+            APP.onLocal(); // Add our data to the userlist
+
+            if (APP.history) {
+                try {
+                    getEditor().asc_setRestriction(true);
+                } catch (e) {}
+            }
+
+            if (lock && !readOnly) { // Lock = !history && migrate
+                onMigrateRdy.fire();
+            }
+
+            if (APP.initCheckpoint) {
+                getEditor().asc_setRestriction(true);
+                makeCheckpoint(true);
+            }
+
+            // Check if history can/should be trimmed
+            var cp = getLastCp();
+            if (cp && cp.file && cp.hash) {
+                var channels = [{
+                    channel: content.channel,
+                    lastKnownHash: cp.hash
+                }];
+                common.checkTrimHistory(channels);
+            }
+            console.log("OO ready");
+        };
+
+        const copy = (a, b) => {
+            Object.keys(b).forEach(k => {
+                if (k === "user") { return; } // Don't change user values
+                if (a[k]) {
+                    if (typeof(a[k]) === "object" && typeof(b[k]) === "object") {
+                        copy(a[k], b[k]);
+                    }
+                    return;
+                }
+                a[k] = b[k];
+            });
+        };
+
+        const createOOConfig = function(blob, file, lock, fromContent, lang, force) {
+            const url = URL.createObjectURL(blob);
             let username = Util.find(privateData, ['integrationConfig', 'user', 'name'])
                             || metadataMgr.getUserData().name
                             || Messages.anonymous;
@@ -1705,8 +2233,7 @@ define([
             //let ec = integrationConfig?.editorConfig;
             let dc = integrationConfig?.document;
 
-            // Config
-            APP.ooconfig = {
+            const ooconfig = {
                 document: {
                     fileType: file.type,
                     key: "fresh",
@@ -1714,7 +2241,8 @@ define([
                     url: url,
                     permissions: {
                         download: dc?.permissions?.download || false,
-                        print: dc?.permissions?.print || true,
+                        print: dc?.permissions?.print !== false,
+                        protect: file.type === 'xlsx',
                     }
                 },
                 "documentType": file.doc,
@@ -1738,231 +2266,45 @@ define([
                     "lang": lang
                 },
                 "events": {
-                    "onAppReady": function(/*evt*/) {
-                        var $iframe = $('iframe[name="frameEditor"]').contents();
-                        $iframe.prop('tabindex', '-1');
-                        var $tb = $iframe.find('head');
-                        var css = // Old OO
-                                  //'#id-toolbar-full .toolbar-group:nth-child(2), #id-toolbar-full .separator:nth-child(3) { display: none; }' +
-                                  //'#fm-btn-save { display: none !important; }' +
-                                  //'#panel-settings-general tr.autosave { display: none !important; }' +
-                                  //'#panel-settings-general tr.coauth { display: none !important; }' +
-                                  //'#header { display: none !important; }' +
-                                  '#title-doc-name { display: none !important; }' +
-                                  '#title-user-name { display: none !important; }' +
-           (supportsXLSX() ? '' : '#slot-btn-dt-print { display: none !important; }') +
-                                  // New OO:
-                                  'section[data-tab="ins"] .separator:nth-last-child(2) { display: none !important; }' + // separator
-                                  '#slot-btn-insequation { display: none !important; }' + // Insert equation
-                                  //'#asc-gen125 { display: none !important; }' + // Disable presenter mode
-                                  //'.toolbar .tabs .ribtab:not(.canedit) { display: none !important; }' + // Switch collaborative mode
-                                  '#fm-btn-info { display: none !important; }' + // Author name, doc title, etc. in "File" (menu entry)
-                                  '#panel-info { display: none !important; }' + // Same but content
-                                  '#image-button-from-url { display: none !important; }' + // Inline image settings: replace with url
-                                  '.cp-from-url, #textart-button-from-url { display: none !important; }' + // Spellcheck language
-                                  '.statusbar .cnt-lang { display: none !important; }' + // Spellcheck language
-                                  '.statusbar #btn-doc-spell { display: none !important; }' + // Spellcheck button
-                                  '#file-menu-panel .devider { display: none !important; }' + // separator in the "File" menu
-                                  '#left-btn-spellcheck, #left-btn-about { display: none !important; }'+
-                                  'div.btn-users.dropdown-toggle { display: none; !important }';
-                        if (readOnly) {
-                            css += '#toolbar { display: none !important; }';
-                            //css += '#app-title { display: none !important; }'; // OnlyOffice logo + doc title
-                            //css += '#file-menu-panel { top: 28px !important; }'; // Position of the "File" menu
-                        }
-                        $('<style>').text(css).appendTo($tb);
-                        setTimeout(function () {
-                            $(window).trigger('resize');
-                        });
-                        if (UI.findOKButton().length) {
-                            UI.findOKButton().on('focusout', function () {
-                                window.setTimeout(function () { UI.findOKButton().focus(); });
-                            });
-                        }
-                    },
-                    "onError": function () {
-                        console.error(arguments);
-                        if (APP.isDownload) {
-                            var sframeChan = common.getSframeChannel();
-                            sframeChan.event('EV_OOIFRAME_DONE', '');
-                        }
-                    },
-                    "onDocumentReady": function () {
-                        evOnSync.fire();
-                        var onMigrateRdy = Util.mkEvent();
-                        onMigrateRdy.reg(function () {
-                            var div = h('div.cp-oo-x2tXls', [
-                                h('span.fa.fa-spin.fa-spinner'),
-                                h('span', Messages.oo_sheetMigration_loading)
-                            ]);
-                            APP.migrateModal = UI.openCustomModal(UI.dialog.customModal(div, {buttons: []}));
-                            makeCheckpoint(true);
-                        });
-                        // DEPRECATED: from version 3, the queue is sent again during init
-                        if (APP.migrate && ((content.version || 1) <= 2)) {
-                            // The doc is ready, fix the worksheets IDs and push the queue
-                            fixSheets();
-                            // Push changes since last cp
-                            ooChannel.ready = true;
-                            var changes = [];
-                            var changesIndex;
-                            ooChannel.queue.forEach(function (data) {
-                                Array.prototype.push.apply(changes, data.msg.changes);
-                                changesIndex = data.msg.changesIndex;
-                                //ooChannel.send(data.msg);
-                            });
-                            ooChannel.cpIndex += ooChannel.queue.length;
-                            var last = ooChannel.queue.pop();
-                            if (last) { ooChannel.lastHash = last.hash; }
-
-                            var onDocUnlock = function () {
-                                // Migration required but read-only: continue...
-                                if (readOnly) {
-                                    setEditable(true);
-                                    try { getEditor().asc_setRestriction(true); } catch (e) {}
-                                } else {
-                                    // No changes after the cp: migrate now
-                                    onMigrateRdy.fire();
-                                }
-                            };
-
-
-                            // Send the changes all at once
-                            if (changes.length) {
-                                setTimeout(function () {
-                                    ooChannel.send({
-                                        type: 'saveChanges',
-                                        changesIndex: changesIndex,
-                                        changes: changes,
-                                        locks: []
-                                    });
-                                    APP.onDocumentUnlock = onDocUnlock;
-                                }, 5000);
-                                return;
-                            }
-                            onDocUnlock();
-                            return;
-                        }
-
-                        if (lock || readOnly) {
-                            try { getEditor().asc_setRestriction(true); } catch (e) {}
-                            //getEditor().setViewModeDisconnect(); // can't be used anymore, display an OO error popup
-                        } else {
-                            setEditable(true);
-                            deleteOfflineLocks();
-                            handleNewLocks({}, content.locks);
-                            if (APP.unsavedChanges) {
-                                var unsaved = APP.unsavedChanges;
-                                delete APP.unsavedChanges;
-                                rtChannel.sendMsg(unsaved, null, function (err, hash) {
-                                    if (err) { return void UI.alert(Messages.oo_lostEdits); }
-                                    // This is supposed to be a "send" function to tell our OO
-                                    // to unlock the cell. We use this to know that the patch was
-                                    // correctly sent so that we can apply it to our OO too.
-                                    ooChannel.send(unsaved);
-                                    ooChannel.cpIndex++;
-                                    ooChannel.lastHash = hash;
-                                });
-                            }
-
-                            if (APP.startNew) {
-                                var w = getWindow();
-                                if (lang === "fr") { lang = 'fr-fr'; }
-                                var l = w.Common.util.LanguageInfo.getLocalLanguageCode(lang);
-                                getEditor().asc_setDefaultLanguage(l);
-                            }
-
-                            if (APP.oldCursor) {
-                                var app = common.getMetadataMgr().getPrivateData().ooType;
-                                var d;
-                                if (app === 'doc') {
-                                    d = getEditor().GetDocument().Document;
-                                } else if (app === 'presentation') {
-                                    d = getEditor().GetPresentation().Presentation;
-                                }
-                                if (d) {
-                                    d.SetSelectionState(APP.oldCursor);
-                                    d.UpdateSelection();
-                                }
-                                delete APP.oldCursor;
-                            }
-                            if (integrationChannel) {
-                                APP.onDocumentUnlock = () => {
-                                    integrationChannel.event('EV_INTEGRATION_READY');
-                                };
-                            }
-                        }
-                        delete APP.startNew;
-
-                        if (fromContent && !lock && Array.isArray(fromContent.content)) {
-                            makePatch(fromContent.content);
-                        }
-
-                        if (APP.isDownload) {
-                            delete APP.isDownload;
-                            var bin = getContent();
-                            if (!supportsXLSX()) {
-                                return void sframeChan.event('EV_OOIFRAME_DONE', bin, {raw: true});
-                            }
-                            nThen(function (waitFor) {
-                                // wait for all the images to be loaded before converting
-                                Object.keys(downloadImages).forEach(function (name) {
-                                    downloadImages[name].reg(waitFor());
-                                });
-                            }).nThen(function () {
-                                x2tConvertData(bin, 'filename.bin', file.type, function (xlsData) {
-                                    sframeChan.event('EV_OOIFRAME_DONE', xlsData, {raw: true});
-                                });
-                            });
-                            return;
-                        }
-
-
-                        if (isLockedModal.modal && force) {
-                            isLockedModal.modal.closeModal();
-                            delete isLockedModal.modal;
-                            if (!APP.history) {
-                                $('#cp-app-oo-editor > iframe')[0].contentWindow.focus();
-                            }
-                        }
-
-                        if (APP.template) {
-                            try { getEditor().asc_setRestriction(true); } catch (e) {}
-                            //getEditor().setViewModeDisconnect();
-                            UI.removeLoadingScreen();
-                            makeCheckpoint(true);
-                            return;
-                        }
-
-                        APP.onLocal(); // Add our data to the userlist
-
-                        if (APP.history) {
-                            try {
-                                getEditor().asc_setRestriction(true);
-                            } catch (e) {}
-                        }
-
-                        if (lock && !readOnly) { // Lock = !history && migrate
-                            onMigrateRdy.fire();
-                        }
-
-                        if (APP.initCheckpoint) {
-                            getEditor().asc_setRestriction(true);
-                            makeCheckpoint(true);
-                        }
-
-                        // Check if history can/should be trimmed
-                        var cp = getLastCp();
-                        if (cp && cp.file && cp.hash) {
-                            var channels = [{
-                                channel: content.channel,
-                                lastKnownHash: cp.hash
-                            }];
-                            common.checkTrimHistory(channels);
-                        }
-                    }
+                    "onAppReady": onAppReady,
+                    "onError": onError,
+                    "onDocumentReady": () => onDocumentReady(lock, lang, fromContent, file, force),
                 }
             };
+
+            if (integrationConfig) {
+                let ec = integrationConfig.editorConfig;
+                let c = ooconfig.editorConfig.customization;
+                copy(ooconfig.editorConfig, ec);
+                // Open "goback" in new tabs because of csp and
+                // iframes
+                if (ec.editorConfig?.customization?.goback) {
+                    c.goback.blank = true;
+                }
+                c.forcesave = true;
+            }
+
+            console.error('updated config', ooconfig);
+            return ooconfig;
+        };
+
+        var firstOO = true;
+        startOO = function (blob, file, force) {
+            if (APP.ooconfig && !force) { return void console.error('already started'); }
+            const lock = !APP.history && (APP.migrate);
+
+            let fromContent = metadataMgr.getPrivateData().fromContent;
+            if (!firstOO) { fromContent = undefined; }
+            firstOO = false;
+
+            // Starting from version 3, we can use the view mode again
+            // defined but never used
+            //var mode = (content && content.version > 2 && lock) ? "view" : "edit";
+
+            const lang = (window.cryptpadLanguage || navigator.language || navigator.userLanguage || '').slice(0,2);
+
+            // Config
+            APP.ooconfig = createOOConfig(blob, file, lock, fromContent, lang, force);
             /*
             // NOTE: Make sure it won't break anaything new (Firefox setTimeout bug)
             window.onbeforeunload = function () {
@@ -1997,6 +2339,114 @@ define([
             APP.UploadImageFiles = function (files, type, id, jwt, cb) {
                 return void cb();
             };
+
+            const getImageURL = function(name) {
+                return new Promise((resolve) => {
+                    if (name && /^data:image/.test(name)) {
+                        return void resolve('');
+                    }
+
+                    var mediasSources = getMediasSources();
+                    var data = mediasSources[name];
+                    downloadImages[name] = Util.mkEvent(true);
+
+                    if (typeof data === 'undefined') {
+                        if (/^http/.test(name) && /slide\/themes\/theme/.test(name)) {
+                            Util.fetch(name, function (err, u8) {
+                                if (err) { return; }
+                                mediasData[name] = {
+                                    blobUrl: name,
+                                    content: u8,
+                                    name: name
+                                };
+                                var b = new Blob([u8], {type: "image/jpeg"});
+                                var blobUrl = URL.createObjectURL(b);
+                                return void resolve(blobUrl);
+                            });
+                            return;
+                        }
+                        debug("CryptPad - could not find matching media for " + name);
+                        return void resolve("");
+                    }
+
+                    var blobUrl = (typeof mediasData[data.src] === 'undefined') ? "" : mediasData[data.src].blobUrl;
+                    if (blobUrl) {
+                        delete downloadImages[name];
+                        debug("CryptPad Image already loaded " + blobUrl);
+
+                        // Fix: https://github.com/cryptpad/cryptpad/issues/1500
+                        // Maybe OO was reloaded, but the CryptPad cache is still intact?
+                        // -> Add the image to OnlyOffice again.
+                        const documentUrls = window.frames[0].AscCommon.g_oDocumentUrls;
+                        if (!(data.name in documentUrls.getUrls())) {
+                            documentUrls.addImageUrl(data.name, blobUrl);
+                        }
+
+                        return void resolve(blobUrl);
+                    }
+
+                    APP.loadingImage++;
+                    Util.fetch(data.src, function (err, u8) {
+                        if (err) {
+                            APP.loadingImage--;
+                            console.error(err);
+                            return void resolve("");
+                        }
+                        try {
+                            debug("Decrypt with key " + data.key);
+                            FileCrypto.decrypt(u8, Util.decodeBase64(data.key), function (err, res) {
+                                APP.loadingImage--;
+                                if (err || !res.content) {
+                                    debug("Decrypting failed");
+                                    return void resolve("");
+                                }
+
+                                try {
+                                    var blobUrl = URL.createObjectURL(res.content);
+                                    // store media blobUrl and content for cache and export
+                                    var mediaData = {
+                                        blobUrl : blobUrl,
+                                        content : "",
+                                        name: name
+                                    };
+                                    mediasData[data.src] = mediaData;
+                                    var reader = new FileReader();
+                                    reader.onloadend = function () {
+                                        debug("MediaData set");
+                                        mediaData.content = reader.result;
+                                        downloadImages[name].fire();
+                                    };
+                                    reader.readAsArrayBuffer(res.content);
+                                    debug("Adding CryptPad Image " + data.name + ": " +  blobUrl);
+                                    window.frames[0].AscCommon.g_oDocumentUrls.addImageUrl(data.name, blobUrl);
+                                    resolve(blobUrl);
+                                } catch (e) {}
+                            });
+                        } catch (e) {
+                            APP.loadingImage--;
+                            debug("Exception decrypting image " + data.name);
+                            console.error(e);
+                            resolve("");
+                        }
+                    }, void 0, common.getCache());
+                });
+            };
+
+            let integrationConfig = privateData?.integrationConfig?._;
+            if (integrationConfig?.editorConfig) {
+                let ec = integrationConfig.editorConfig;
+                let c = APP.ooconfig.editorConfig.customization;
+                copy(APP.ooconfig.editorConfig, ec);
+                // Open "goback" in new tabs because of csp and
+                // iframes
+                if (ec.editorConfig?.customization?.goback) {
+                    c.goback.blank = true;
+                }
+                if (typeof(privateData?.integrationConfig?.autosave) !== "number") {
+                    c.forcesave = true;
+                }
+            }
+
             APP.AddImage = function(cb1, cb2) {
                 APP.AddImageSuccessCallback = cb1;
                 APP.AddImageErrorCallback = cb2;
@@ -2038,7 +2488,7 @@ define([
                     APP.onLocal();
 
                     APP.realtime.onSettle(function () {
-                        APP.getImageURL(name, function(url) {
+                        getImageURL(name).then(function(url) {
                             debug("CRYPTPAD success add " + name);
                             common.setPadAttribute('atime', +new Date(), null, data.href);
                             APP.AddImageSuccessCallback({
@@ -2073,6 +2523,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
             };
 
             APP.loadingImage = 0;
+
             APP.getImageURL = function(name, callback) {
                 if (name && /^data:image/.test(name)) {
                     return void callback('');
@@ -2163,30 +2614,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                 }, void 0, common.getCache());
             };
 
-            let copy = (a, b) => {
-                Object.keys(b).forEach(k => {
-                    if (k === "user") { return; } // Don't change user values
-                    if (a[k]) {
-                        if (typeof(a[k]) === "object" && typeof(b[k]) === "object") {
-                            copy(a[k], b[k]);
-                        }
-                        return;
-                    }
-                    a[k] = b[k];
-                });
-            };
-            if (integrationConfig) {
-                let ec = integrationConfig.editorConfig;
-                let c = APP.ooconfig.editorConfig.customization;
-                copy(APP.ooconfig.editorConfig, ec);
-                // Open "goback" in new tabs because of csp and
-                // iframes
-                if (ec.editorConfig?.customization?.goback) {
-                    c.goback.blank = true;
-                }
-                c.forcesave = true;
-            }
-
+            
             // Always hide right menu
             try {
                 localStorage?.original?.removeItem('sse-hide-right-settings');
@@ -2195,8 +2623,19 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
             } catch (e) {}
 
             APP.docEditor = new window.DocsAPI.DocEditor("cp-app-oo-placeholder-a", APP.ooconfig);
+
             ooLoaded = true;
-            makeChannel();
+            if (content.version < 7) {
+                makeChannel();
+                return;
+            }
+            APP.docEditor.connectMockServer({
+                onMessage: fromOOHandler,
+                getParticipants: getParticipants,
+                onAuth: onAuth,
+                getImageURL: getImageURL,
+                getInitialChanges: getInitialChanges,
+            });
         };
 
         APP.printPdf = function (obj, cb) {
@@ -2218,24 +2657,8 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
         };
 
         var x2tSaveAndConvertData = function(data, filename, extension, finalFilename) {
-            var type = common.getMetadataMgr().getPrivateData().ooType;
             var e = getEditor();
 
-            // PDF
-            if (type === "sheet" && extension === "pdf") {
-                var d = e.asc_nativePrint(undefined, undefined, 0x101).ImData;
-                x2tConvertData({
-                    buffer: d.data,
-                    bin: data
-                }, filename, extension, function (res) {
-                    if (res) {
-                        var _blob = new Blob([res], {type: "application/pdf;charset=utf-8"});
-                        UI.removeModals();
-                        saveAs(_blob, finalFilename);
-                    }
-                });
-                return;
-            }
             if (extension === "pdf") {
                 APP.exportPdfName = finalFilename;
                 return void e.asc_Print({});
@@ -2247,15 +2670,17 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                     saveAs(blob, finalFilename);
                     return;
                 }
-                UI.warn(Messages.error);
+                UI.alert(Messages.oo_couldNotConvertDocument);
             });
         };
 
         var exportXLSXFile = function() {
-            var text = getContent();
+            var type = common.getMetadataMgr().getPrivateData().ooType;
+            var md = common.getMetadataMgr().getMetadataLazy();
+            var title = md.title || md.defaultTitle || type;
+            var text = getContent(title);
             var suggestion = Title.suggestTitle(Title.defaultTitle);
             var ext = ['.xlsx', '.ods', '.bin', '.pdf'];
-            var type = common.getMetadataMgr().getPrivateData().ooType;
             var warning = '';
             if (type==="presentation") {
                 ext = ['.pptx', '.odp', '.bin', '.pdf'];
@@ -2292,7 +2717,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                 warning
             ]);
 
-            UI.prompt(promptMessage, Util.fixFileName(suggestion), function (filename) {
+            UI.prompt(promptMessage, Util.fixFileName(suggestion), async function (filename) {
                 // $select.getValue()
                 if (!(typeof(filename) === 'string' && filename)) { return; }
                 var ext = ($select.getValue() || '').slice(1);
@@ -2302,8 +2727,12 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                     return;
                 }
 
+                if (BrokenFormats.brokenExportFormats.includes(ext)) {
+                    await UI.alertPromise(Messages.oo_unstableMigrationWarning);
+                }
+
                 var content = h('div.cp-oo-x2tXls', [
-                    h('span.fa.fa-spin.fa-spinner'),
+                    Icons.get('loading'),
                     h('span', Messages.oo_exportInProgress)
                 ]);
                 UI.openCustomModal(UI.dialog.customModal(content, {buttons: []}));
@@ -2385,19 +2814,26 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
             });
         };
 
-        var importFile = function(content) {
-            // Abort if there is another real user in the channel (history keeper excluded)
+        // Abort if there is another real user in the channel (history keeper excluded)
+        var checkChannelUsers = function () {
             var m = metadataMgr.getChannelMembers().slice().filter(function (nId) {
                 return nId.length === 32;
             });
             if (m.length > 1) {
                 UI.removeModals();
-                return void UI.alert(Messages.oo_cantUpload);
+                UI.alert(Messages.oo_cantUpload);
+                return true;
+            }
+        };
+
+        var importFile = function(content) {
+            if (checkChannelUsers()) {
+                return;
             }
             if (!content) {
                 UI.removeModals();
                 return void UI.alert(Messages.oo_invalidFormat);
-            }
+            }
             var blob = new Blob([content], {type: 'plain/text'});
             var file = getFileType();
             blob.name = (metadataMgr.getMetadataLazy().title || file.doc) + '.' + file.type;
@@ -2419,18 +2855,27 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
             APP.FM.handleFile(blob, data);
         };
 
-        var importXLSXFile = function(content, filename, ext) {
+        var importXLSXFile = async function(content, filename, ext) {
             // Perform the x2t conversion
             debug("Filename");
             debug(filename);
+
+            if (BrokenFormats.brokenImportFormats.includes(ext)) {
+                await UI.alertPromise(Messages.oo_unstableMigrationWarning);
+            }
+
             if (ext === "bin") {
                 return void importFile(content);
             }
             if (!supportsXLSX()) {
                 return void UI.alert(Messages.oo_invalidFormat);
             }
+            if (checkChannelUsers()) {
+                return;
+            }
+
             var div = h('div.cp-oo-x2tXls', [
-                h('span.fa.fa-spin.fa-spinner'),
+                Icons.get('loading'),
                 h('span', Messages.oo_importInProgress)
             ]);
             UI.openCustomModal(UI.dialog.customModal(div, {buttons: []}));
@@ -2445,27 +2890,35 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
             }, 100);
         };
 
-        var loadDocument = function (noCp, useNewDefault, i) {
+        var loadDocument = function (noCp, useNewDefault, i, cb) {
             if (ooLoaded) { return; }
             var type = common.getMetadataMgr().getPrivateData().ooType;
             var file = getFileType();
             if (!noCp) {
                 var lastCp = getLastCp(false, i);
                 // If the last checkpoint is empty, load the "initial" doc instead
-                if (!lastCp || !lastCp.file) { return void loadDocument(true, useNewDefault); }
+                if (!lastCp || !lastCp.file) { return void loadDocument(true, useNewDefault, undefined, cb); }
                 // Load latest checkpoint
                 return void loadLastDocument(lastCp)
                     .then(({blob, fileType}) => {
-                        startOO(blob, fileType);
+                        cb({
+                            blob,
+                            file: fileType
+                        });
                     })
-                    .catch(() => {
+                    .catch((err) => {
                         // Checkpoint error: load the previous one
+                        if (err === "DECRYPTION_ERROR" || err === "E_METADATA_DECRYPTION") {
+                            deleteLastCp(i);
+                        }
                         i = i || 0;
-                        loadDocument(noCp, useNewDefault, ++i);
+                        loadDocument(noCp, useNewDefault, ++i, cb);
                     });
             }
             var blob = loadInitDocument(type, useNewDefault);
-            startOO(blob, file);
+            cb({
+                blob, file
+            });
         };
 
         var initializing = true;
@@ -2561,6 +3014,12 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                 if (!keepQueue) { ooChannel.queue = []; }
                 resetData(blob, file);
             }
+        };
+
+        var loadHistoryCp = function (cp, keepQueue) {
+            APP.history = true;
+            APP.stopHistory = false;
+            loadCp(cp, keepQueue);
         };
 
         var loadTemplate = function (href, pw, parsed) {
@@ -2673,6 +3132,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                 UI.warn(Messages.error);
             });
         });
+
         sframeChan.on('EV_OOIFRAME_REFRESH', function (data) {
             // We want to get the "bin" content of a sheet from its json in order to download
             // something useful from a non-onlyoffice app (download from drive or settings).
@@ -2688,10 +3148,10 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
             content = json.content;
             readOnly = true;
             var version = (!content.version || content.version === 1) ? 'v1/' :
-                          (content.version <= 3 ? 'v2b/' : CURRENT_VERSION+'/');
+                          (content.version <= 3 ? 'v2b/' : OOCurrentVersion.currentVersion + '/');
             var s = h('script', {
                 type:'text/javascript',
-                src: ApiConfig.httpSafeOrigin + '/common/onlyoffice/dist/'+version+'web-apps/apps/api/documents/api.js'
+                src: ApiConfig.httpSafeOrigin + '/common/onlyoffice/dist/'+version+'web-apps/apps/api/documents/api.js?' + APP.urlArgs
             });
             $('#cp-app-oo-editor').empty().append(h('div#cp-app-oo-placeholder-a')).append(s);
 
@@ -2743,7 +3203,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
 
                 var $dlMedias = common.createButton('', true, {
                     name: 'dlmedias',
-                    icon: 'fa-download',
+                    icon: 'download',
                 }, function () {
                     require(['/components/jszip/dist/jszip.min.js'], function (JsZip) {
                         var zip = new JsZip();
@@ -2771,6 +3231,8 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                     // flag only when the checkpoint is ready.
                     APP.stopHistory = true;
                     makeCheckpoint(true);
+                    toolbar.setHistory(false);
+
                 };
                 var onPatch = function (patch) {
                     // Patch on the current cp
@@ -2778,14 +3240,43 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                 };
                 var onCheckpoint = function (cp) {
                     // We want to load a checkpoint:
-                    loadCp(cp);
+                    loadCp(cp, true);
+                };
+                var onPatchBack = function (cp, msgs) {
+                    APP.history = true;
+                    APP.stopHistory = false;
+                    if (msgs) {
+                        var msgsFormatted = [];
+                        msgs.forEach(function(msg) {
+                            var parsedMsg = JSON.parse(msg.msg);
+        
+                            var formattedMsg = {
+                                msg: parsedMsg,
+                                hash: msg.serverHash, 
+                                author: msg.author,
+                                time: msg.time
+                            };
+                            msgsFormatted.push(formattedMsg);
+                        });
+                        ooChannel.queue = msgsFormatted;
+                        setTimeout(function () {
+                            loadCp(cp, true);
+                        }, 200);
+                    } else {
+                        loadCp(cp);
+                    }
+                };
+                var docType = function() {
+                    return APP.ooconfig.documentType;
                 };
                 var setHistoryMode = function (bool) {
                     if (bool) {
                         APP.history = true;
+                        toolbar.setHistory(true);
                         try { getEditor().asc_setRestriction(true); } catch (e) {}
                         return;
                     }
+                    toolbar.setHistory(false);
                     // Cancel button: redraw from lastCp
                     APP.history = false;
                     ooChannel.queue = [];
@@ -2835,10 +3326,13 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
 
                 var $historyButton = common.createButton('', true, {
                     name: 'history',
-                    icon: 'fa-history',
+                    icon: 'history',
                     text: Messages.historyText,
                     tippy: Messages.historyButton
                 });
+                if (!AppConfig.enableHistory) {
+                    $historyButton.css('display', 'none');
+                }
 
                 $historyButton.click(function () {
                     ooChannel.historyLastHash = ooChannel.lastHash;
@@ -2846,6 +3340,10 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                     Feedback.send('OO_HISTORY');
                     var histConfig = {
                         onPatch: onPatch,
+                        onPatchBack: onPatchBack,
+                        docType: docType,
+                        loadCp: loadCp,
+                        loadHistoryCp: loadHistoryCp, 
                         onCheckpoint: onCheckpoint,
                         onRevert: commit,
                         setHistory: setHistoryMode,
@@ -2908,7 +3406,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
             if (window.CP_DEV_MODE || DISPLAY_RESTORE_BUTTON) {
                 common.createButton('', true, {
                     name: 'delete',
-                    icon: 'fa-trash',
+                    icon: 'trash-full',
                     hiddenReadOnly: true
                 }).click(function () {
                     if (initializing) { return void console.error('initializing'); }
@@ -2916,7 +3414,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                 }).attr('title', 'Delete last checkpoint').appendTo(toolbar.$bottomM);
                 common.createButton('', true, {
                     name: 'restore',
-                    icon: 'fa-history',
+                    icon: 'history',
                     hiddenReadOnly: true
                 }).click(function () {
                     if (initializing) { return void console.error('initializing'); }
@@ -2974,6 +3472,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
             var $forgetButton = common.createButton('forget', true, {}, function (err) {
                 if (err) { return; }
                 setEditable(false);
+                toolbar.forgotten();
             });
             var $forget = UIElements.getEntryFromButton($forgetButton);
             toolbar.$drawer.append($forget);
@@ -3048,7 +3547,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
 
             APP.startNew = isNew;
 
-            var version = CURRENT_VERSION + '/';
+            var version = OOCurrentVersion.currentVersion + '/';
             var msg;
             // Old version detected: use the old OO and start the migration if we can
             if (privateData.ooForceVersion) {
@@ -3119,8 +3618,39 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                     }
                     readOnly = true;
                 }
+            } else if (content && content.version <= 7) {
+                version = 'v7/';
+                APP.migrate = true;
+                // Registedred ~~users~~ editors can start the migration
+                if (common.isLoggedIn() && !readOnly) {
+                    content.migration = true;
+                    APP.onLocal();
+                } else {
+                    msg = h('div.alert.alert-warning.cp-burn-after-reading', Messages.oo_sheetMigration_anonymousEditor);
+                    if (APP.helpMenu) {
+                        $(APP.helpMenu.menu).after(msg);
+                    } else {
+                        $('#cp-app-oo-editor').prepend(msg);
+                    }
+                    readOnly = true;
+                }
+            } else if (content && content.version <= 8) {
+                version = 'v8/';
+                APP.migrate = true;
+                // Registedred ~~users~~ editors can start the migration
+                if (common.isLoggedIn() && !readOnly) {
+                    content.migration = true;
+                    APP.onLocal();
+                } else {
+                    msg = h('div.alert.alert-warning.cp-burn-after-reading', Messages.oo_sheetMigration_anonymousEditor);
+                    if (APP.helpMenu) {
+                        $(APP.helpMenu.menu).after(msg);
+                    } else {
+                        $('#cp-app-oo-editor').prepend(msg);
+                    }
+                    readOnly = true;
+                }
             }
-            // NOTE: don't forget to also update the version in 'EV_OOIFRAME_REFRESH'
 
             // If the sheet is locked by an offline user, remove it
             if (content && content.saveLock && !isUserOnline(content.saveLock)) {
@@ -3134,7 +3664,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
 
             var s = h('script', {
                 type:'text/javascript',
-                src: ApiConfig.httpSafeOrigin + '/common/onlyoffice/dist/'+version+'web-apps/apps/api/documents/api.js'
+                src: ApiConfig.httpSafeOrigin + '/common/onlyoffice/dist/'+version+'web-apps/apps/api/documents/api.js?' + APP.urlArgs
             });
             $('#cp-app-oo-editor').append(s);
 
@@ -3158,6 +3688,8 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
 
 
             var useNewDefault = content.version && content.version >= 2;
+
+            loadDocument(newDoc, useNewDefault,void 0, cpObj => {
             openRtChannel(Util.once(function () {
                 setMyId();
                 oldHashes = JSON.parse(JSON.stringify(content.hashes));
@@ -3221,7 +3753,8 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                 }
 
                 var next = function () {
-                    loadDocument(newDoc, useNewDefault);
+                    const { blob, file } = cpObj;
+                    startOO(blob, file);
                     setEditable(!readOnly);
                     UI.removeLoadingScreen();
                 };
@@ -3276,8 +3809,12 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                     const integrationHasUnsavedChanges = function(unsavedChanges, cb) {
                         integrationChannel.query('Q_INTEGRATION_HAS_UNSAVED_CHANGES', unsavedChanges, cb);
                     };
+                    const onUserlistChange = (list) => {
+                        integrationChannel.event('Q_INTEGRATION_USERLIST_CHANGE', list);
+                    };
                     var inte = common.createIntegration(integrationSave,
-                                                integrationHasUnsavedChanges);
+                                            integrationHasUnsavedChanges,
+                                            onUserlistChange);
                     if (inte && cfg.autosave) {
                         evIntegrationSave.reg(function () {
                             inte.changed();
@@ -3300,6 +3837,11 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                         integrationSave(function (obj) {
                             if (obj && obj.error) { console.error(obj.error); }
                             cb();
+                        });
+                    });
+                    integrationChannel.on('EV_INTEGRATION_MANUAL_SAVE', function () {
+                        integrationSave(function () {
+                            console.log('Integration manual save');
                         });
                     });
 
@@ -3413,6 +3955,7 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
 
                 next();
             }));
+            });
         };
 
         config.onError = function (err) {
@@ -3576,6 +4119,8 @@ Uncaught TypeError: Cannot read property 'calculatedType' of null
                 //noTemplates: true
             });
         }).nThen(function (/*waitFor*/) {
+            APP.supportModule = common.makeUniversal('support');
+            APP.support = Support.create(common, false);
             andThen(common);
         });
     };
